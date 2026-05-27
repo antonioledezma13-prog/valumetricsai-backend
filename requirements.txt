@@ -1,0 +1,13 @@
+# Requeridos para funcionar
+fastapi
+uvicorn[standard]
+pydantic
+pyjwt
+reportlab
+python-multipart
+Pillow
+python-dotenv
+
+# Opcionales — instalar por separado si se necesitan
+# pip install ultralytics    <- para análisis de patologías YOLOv8
+# pip install supabase       <- para PostGIS/base de datos cloud
