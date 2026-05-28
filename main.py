@@ -8,7 +8,7 @@ Rutas:
   GET  /valuation/pdf/{hash_operacion}
 """
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -174,6 +174,71 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Token inválido")
 
 # ──────────────────────────────────────────────────────
+#  Sistema de Planes y Límites de Uso
+# ──────────────────────────────────────────────────────
+
+PLAN_LIMITES = {
+    # plan          : (val_mes, pdf,   vision, historial)
+    "anonimo"       : (3,   False, False, False),
+    "free"          : (5,   False, False, False),
+    "profesional"   : (50,  True,  True,  True),
+    "inmobiliaria"  : (200, True,  True,  True),
+    "enterprise"    : (-1,  True,  True,  True),
+    "payperuse"     : (1,   True,  True,  False),
+}
+
+anonimo_db: dict = {}   # ip → {"count": n, "mes": "2026-05"}
+
+def get_mes_actual() -> str:
+    return datetime.utcnow().strftime("%Y-%m")
+
+def get_plan_usuario(user: dict) -> str:
+    return user.get("plan", "free").lower()
+
+def puede_valuar(user: dict = None, ip: str = "") -> tuple:
+    mes = get_mes_actual()
+    if user is None:
+        sesion = anonimo_db.get(ip, {"count": 0, "mes": mes})
+        if sesion["mes"] != mes:
+            sesion = {"count": 0, "mes": mes}
+        limite = PLAN_LIMITES["anonimo"][0]
+        usadas = sesion["count"]
+        if usadas >= limite:
+            return False, "anonimo_limite", limite, usadas
+        return True, "ok", limite, usadas
+    plan    = get_plan_usuario(user)
+    limites = PLAN_LIMITES.get(plan, PLAN_LIMITES["free"])
+    limite  = limites[0]
+    mes_user = user.get("mes_actual", mes)
+    usadas   = user.get("valuaciones_mes", 0) if mes_user == mes else 0
+    if limite == -1:
+        return True, "ok", -1, usadas
+    if usadas >= limite:
+        return False, "plan_limite", limite, usadas
+    return True, "ok", limite, usadas
+
+def puede_pdf(user: dict) -> bool:
+    return PLAN_LIMITES.get(get_plan_usuario(user), PLAN_LIMITES["free"])[1]
+
+def puede_vision(user: dict) -> bool:
+    return PLAN_LIMITES.get(get_plan_usuario(user), PLAN_LIMITES["free"])[2]
+
+def registrar_uso(user: dict = None, ip: str = ""):
+    mes = get_mes_actual()
+    if user is None:
+        sesion = anonimo_db.get(ip, {"count": 0, "mes": mes})
+        if sesion["mes"] != mes:
+            sesion = {"count": 0, "mes": mes}
+        sesion["count"] += 1
+        anonimo_db[ip] = sesion
+        return
+    if user.get("mes_actual") != mes:
+        user["mes_actual"]      = mes
+        user["valuaciones_mes"] = 0
+    user["valuaciones_mes"]  = user.get("valuaciones_mes", 0) + 1
+    user["valuaciones_count"] = user.get("valuaciones_count", 0) + 1
+
+# ──────────────────────────────────────────────────────
 #  Rutas de autenticación
 # ──────────────────────────────────────────────────────
 
@@ -182,6 +247,7 @@ async def register(req: RegisterRequest):
     if req.email in users_db:
         raise HTTPException(status_code=409, detail="El email ya está registrado")
     user_id = str(uuid.uuid4())
+    mes = get_mes_actual()
     users_db[req.email] = {
         "id": user_id,
         "nombre": req.nombre,
@@ -191,8 +257,11 @@ async def register(req: RegisterRequest):
         "telefono": req.telefono,
         "empresa": req.empresa,
         "rol": req.rol,
-        "created_at": datetime.utcnow().isoformat(),
+        "plan": "free",
+        "mes_actual": mes,
+        "valuaciones_mes": 0,
         "valuaciones_count": 0,
+        "created_at": datetime.utcnow().isoformat(),
     }
     token = create_token(req.email, req.nombre, req.rol)
     return {
@@ -237,7 +306,23 @@ async def me(payload: dict = Depends(verify_token)):
 # ──────────────────────────────────────────────────────
 
 @app.post("/valuation/calculate")
-async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token)):
+async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token), request: Request = None):
+    user = users_db.get(payload["sub"], {})
+    ip   = (request.client.host if request else "") or ""
+    puede, razon, limite, usadas = puede_valuar(user, ip)
+    if not puede:
+        plan_actual = get_plan_usuario(user)
+        raise HTTPException(status_code=429, detail={
+            "error": "limite_alcanzado",
+            "razon": razon,
+            "plan": plan_actual,
+            "limite": limite,
+            "usadas": usadas,
+            "mensaje": (
+                f"Has alcanzado el límite de {limite} valuaciones este mes para el plan {plan_actual.title()}. "
+                f"Actualiza tu plan en la página de Planes."
+            ),
+        })
     inp = InputValuacion(
         tipo_inmueble=req.tipo_inmueble,
         direccion=req.direccion,
@@ -294,10 +379,8 @@ async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token)
 
     # Persistir resultado
     valuations_db[resultado.hash_operacion] = resultado
-
-    # Incrementar contador del usuario
-    if payload["sub"] in users_db:
-        users_db[payload["sub"]]["valuaciones_count"] += 1
+    # Registrar uso del mes
+    registrar_uso(users_db.get(payload["sub"]), ip or "")
 
     return resultado.__dict__
 
@@ -367,6 +450,11 @@ async def pdf_direct(req: PDFDirectRequest, payload: dict = Depends(verify_token
         notas_pericial=r.get("notas_pericial") or [],
     )
 
+    # Adjuntar resultado de visión si viene en el request
+    vision_data = r.get("vision_resultado")
+    if vision_data:
+        resultado.vision_resultado = vision_data
+
     # Guardar también en memoria para referencia futura
     valuations_db[resultado.hash_operacion] = resultado
 
@@ -380,6 +468,66 @@ async def pdf_direct(req: PDFDirectRequest, payload: dict = Depends(verify_token
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="ValuMetrics_{resultado.hash_operacion}.pdf"'},
     )
+
+@app.post("/valuation/calculate-anonimo")
+async def calculate_anonimo(req: ValuationRequest, request: Request):
+    """
+    Valuación sin autenticación — límite 3/mes por IP.
+    No guarda historial, no genera PDF.
+    """
+    ip = request.client.host or "unknown"
+    puede, razon, limite, usadas = puede_valuar(None, ip)
+    if not puede:
+        raise HTTPException(status_code=429, detail={
+            "error": "limite_anonimo",
+            "razon": "Sin registro solo puedes hacer 3 valuaciones por mes.",
+            "limite": limite, "usadas": usadas,
+            "mensaje": "Regístrate gratis para obtener 5 valuaciones/mes, o actualiza a un plan de pago.",
+        })
+
+    inp = InputValuacion(
+        tipo_inmueble=req.tipo_inmueble,
+        direccion=req.direccion, ciudad=req.ciudad,
+        zona_tipo=req.zona_tipo,
+        zona_clase=req.zona_clase, zona_acceso=req.zona_acceso,
+        zona_vias=req.zona_vias, zona_agua=req.zona_agua,
+        zona_electricidad=req.zona_electricidad,
+        zona_gas=req.zona_gas, zona_aseo=req.zona_aseo,
+        zona_uso_suelo=req.zona_uso_suelo, zona_densidad=req.zona_densidad,
+        zona_ambito=req.zona_ambito, zona_seguridad=req.zona_seguridad,
+        zona_equipamiento=req.zona_equipamiento,
+        area_terreno_m2=req.area_terreno_m2,
+        valor_tierra_usd_m2=req.valor_tierra_usd_m2,
+        area_construida_m2=req.area_construida_m2,
+        edad_anios=req.edad_anios,
+        tipo_construccion=req.tipo_construccion,
+        tipo_techo=req.tipo_techo,
+        acabados=req.acabados,
+        estado_conservacion=req.estado_conservacion,
+        piso_nivel=req.piso_nivel,
+        tiene_ascensor=req.tiene_ascensor,
+        puesto_estacionamiento=req.puesto_estacionamiento,
+        hectareas=req.hectareas, mejoras_agricolas=req.mejoras_agricolas,
+        altura_libre_m=req.altura_libre_m, tiene_rampa=req.tiene_rampa,
+        capacidad_electrica_kva=req.capacidad_electrica_kva,
+        habitaciones=req.habitaciones, banos=req.banos,
+        medios_banos=req.medios_banos, estacionamientos=req.estacionamientos,
+        amenidades=req.amenidades, clima=req.clima,
+        comparables=req.comparables, renta_mensual_usd=req.renta_mensual_usd,
+        tiene_planos=req.tiene_planos, tiene_imagenes=req.tiene_imagenes,
+        tasa_bcv_ves=req.tasa_bcv_ves, notas=req.notas,
+    )
+    try:
+        motor = MotorValuacion()
+        resultado = motor.valorar(inp)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    registrar_uso(None, ip)
+    r = resultado.__dict__.copy()
+    r["_anonimo"] = True
+    r["_restantes"] = limite - usadas - 1
+    return r
 
 @app.get("/valuation/history")
 async def history(payload: dict = Depends(verify_token)):
@@ -418,7 +566,15 @@ async def analizar_patologias(req: VisionRequest, payload: dict = Depends(verify
         estado_actual=req.estado_actual,
         conf_threshold=req.conf_threshold,
     )
-    return resultado.__dict__
+    # Convertir dataclasses anidadas a dicts para JSON serialization
+    import dataclasses
+    def to_dict(obj):
+        if dataclasses.is_dataclass(obj):
+            return {k: to_dict(v) for k, v in dataclasses.asdict(obj).items()}
+        if isinstance(obj, list):
+            return [to_dict(i) for i in obj]
+        return obj
+    return to_dict(resultado)
 
 # ──────────────────────────────────────────────────────
 #  Ruta: Mapa de calor PostGIS

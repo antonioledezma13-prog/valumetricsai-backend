@@ -1,527 +1,373 @@
 """
-ValuMetrics AI — Servicio de Visión Computacional (YOLOv8)
-==========================================================
-Analiza imágenes de inmuebles para detectar patologías estructurales:
-  - Grietas (fisuras capilares, grietas activas, grietas pasivas)
-  - Eflorescencia / humedad
-  - Desportillado / desprendimiento de revestimiento
-  - Corrosión de acero expuesto
-  - Asentamientos diferenciales visibles
+ValuMetrics AI — Análisis de Patologías con Claude Vision API
+=============================================================
+Reemplaza YOLOv8 con Claude claude-sonnet-4-20250514 Vision.
+Ventajas:
+  - Sin instalación de modelos ni GPU
+  - Análisis técnico pericial en lenguaje natural
+  - Funciona en Render free tier
+  - Más preciso que heurístico, más descriptivo que YOLO
+  - ~$0.01-0.03 USD por imagen analizada
 
-El análisis es OPCIONAL — si no hay imagen, el score de confianza
-no se penaliza. Si hay imagen, puede sumar hasta +12 puntos al score.
-
-Modelo: YOLOv8n (nano) — optimizado para CPU, ~6MB, inferencia ~2-4s/imagen
+Flujo:
+  1. Usuario sube foto(s) → base64
+  2. Se envían a Claude API con prompt pericial estructurado
+  3. Claude responde JSON con patologías detectadas
+  4. Se generan bboxes aproximados si Claude los identifica
+  5. Resultado se integra al valor y al PDF
 """
 
 import os
 import io
+import json
 import base64
 import time
+import re
+import anthropic
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Optional
 from dataclasses import dataclass, field
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
-# ── Rutas del modelo ──────────────────────────────────────────
-MODEL_DIR  = Path(__file__).parent.parent / "models"
-MODEL_PATH = MODEL_DIR / "yolov8_patologias.pt"
-
-# ── Clases de patologías estructurales ───────────────────────
-PATOLOGIA_CLASES = {
-    0: "grieta_capilar",
-    1: "grieta_activa",
-    2: "grieta_pasiva",
-    3: "eflorescencia",
-    4: "humedad",
-    5: "desportillado",
-    6: "corrosion_acero",
-    7: "asentamiento",
-    8: "desprendimiento",
-    9: "carbonatacion",
-}
-
-# Severidad de cada clase (afecta el ajuste al score)
-SEVERIDAD = {
-    "grieta_capilar":   "leve",
-    "grieta_activa":    "critica",
-    "grieta_pasiva":    "moderada",
-    "eflorescencia":    "leve",
-    "humedad":          "moderada",
-    "desportillado":    "moderada",
-    "corrosion_acero":  "critica",
-    "asentamiento":     "critica",
-    "desprendimiento":  "moderada",
-    "carbonatacion":    "leve",
-}
-
-# Penalización al score de confianza por severidad
-PENALIZACION_SCORE = {
-    "leve":     -1.0,
-    "moderada": -2.5,
-    "critica":  -5.0,
-}
-
-# Ajuste al estado de conservación sugerido
-DEGRADACION_ESTADO = {
-    "leve":     0,      # no cambia el estado
-    "moderada": 1,      # baja un nivel (ej: bueno → normal)
-    "critica":  2,      # baja dos niveles (ej: bueno → regular)
-}
+# ── Configuración ─────────────────────────────────────────────
+CONF_MINIMA = 0.60    # Solo reportar con ≥60% confianza
 
 ORDEN_ESTADOS = ["optimo", "bueno", "normal", "regular", "malo", "ruinoso"]
 
-# Colores para el bounding box según severidad
-COLORES_BBOX = {
-    "leve":     (255, 200, 0),    # amarillo
-    "moderada": (255, 120, 0),    # naranja
-    "critica":  (220, 20, 60),    # rojo
-}
+PENALIZACION_SCORE = {"leve": -1.5, "moderada": -3.0, "critica": -6.0}
+PENALIZACION_VALOR = {"leve": 0.5,  "moderada": 2.0,  "critica": 4.0}
 
+# Prompt pericial para Claude
+PROMPT_PERICIAL = """Eres un ingeniero estructural y perito valuador certificado con 20 años de experiencia en Venezuela.
 
-# ─────────────────────────────────────────────────────────────
-#  Dataclasses
-# ─────────────────────────────────────────────────────────────
+Analiza esta imagen de un inmueble con criterio técnico pericial estricto.
+
+INSTRUCCIONES:
+- Solo reporta patologías que CLARAMENTE se ven en la imagen
+- NO inventes ni asumas patologías que no sean visibles
+- Si la imagen es de buena calidad y no hay daños visibles, reporta lista vacía
+- Sé conservador: ante la duda, NO reportes
+
+Para cada patología visible, proporciona:
+- tipo: una de estas categorías exactas:
+  grieta_capilar | grieta_activa | grieta_pasiva | eflorescencia | 
+  humedad | desportillado | corrosion_acero | asentamiento | 
+  desprendimiento | carbonatacion | falla_estructural
+- severidad: leve | moderada | critica
+- confianza: número entre 0.0 y 1.0 (qué tan seguro estás de esta detección)
+- ubicacion: descripción de dónde se ve en la imagen (ej: "esquina superior derecha", "columna central")
+- descripcion_tecnica: descripción técnica pericial en español (2-3 oraciones)
+- dimension_estimada: estimación del tamaño si es posible (ej: "grieta ~2mm ancho, ~30cm longitud")
+
+Responde ÚNICAMENTE con JSON válido, sin texto adicional, sin markdown:
+{
+  "patologias": [
+    {
+      "tipo": "...",
+      "severidad": "...", 
+      "confianza": 0.0,
+      "ubicacion": "...",
+      "descripcion_tecnica": "...",
+      "dimension_estimada": "..."
+    }
+  ],
+  "condicion_general": "buena | regular | deficiente | critica",
+  "observaciones_generales": "...",
+  "elemento_analizado": "fachada | columna | viga | losa | pared | piso | otro"
+}"""
+
 
 @dataclass
 class Deteccion:
-    clase: str
-    clase_id: int
-    confianza: float          # 0.0 – 1.0
+    tipo: str
     severidad: str
-    bbox: Tuple[float, float, float, float]   # x1, y1, x2, y2 (relativo)
-    descripcion: str = ""
+    confianza: float
+    ubicacion: str
+    descripcion_tecnica: str
+    dimension_estimada: str = ""
+
+
+@dataclass
+class FotoAnalizada:
+    imagen_original_b64: str
+    imagen_anotada_b64:  str
+    detecciones: List[Deteccion]
+    condicion_general: str = "—"
+    observaciones: str = ""
+    elemento: str = "—"
+    nombre: str = "Imagen"
 
 
 @dataclass
 class ResultadoVision:
-    analizado: bool = False
-    imagenes_procesadas: int = 0
-    tiempo_inferencia_s: float = 0.0
-    detecciones: List[Deteccion] = field(default_factory=list)
-    # Resumen
-    total_patologias: int = 0
-    patologias_criticas: int = 0
-    patologias_moderadas: int = 0
-    patologias_leves: int = 0
-    # Impacto en valuación
-    ajuste_score: float = 0.0           # negativo si hay daños
-    estado_sugerido: str = ""           # estado de conservación sugerido
-    penalizacion_valor_pct: float = 0.0 # % de penalización sobre valor final
-    # Imagen anotada
-    imagen_anotada_b64: str = ""        # JPEG base64 con bboxes dibujados
-    # Recomendaciones
-    recomendaciones: List[str] = field(default_factory=list)
-    nota_general: str = ""
+    analizado:            bool  = False
+    motor:                str   = "Claude Vision API"
+    imagenes_procesadas:  int   = 0
+    tiempo_s:             float = 0.0
+    fotos: List[FotoAnalizada]  = field(default_factory=list)
+    total_patologias:     int   = 0
+    patologias_criticas:  int   = 0
+    patologias_moderadas: int   = 0
+    patologias_leves:     int   = 0
+    ajuste_score:         float = 0.0
+    penalizacion_valor_pct: float = 0.0
+    estado_sugerido:      str   = ""
+    recomendaciones: List[str]  = field(default_factory=list)
+    nota_general:         str   = ""
+    advertencia:          str   = ""
 
-
-# ─────────────────────────────────────────────────────────────
-#  Servicio principal
-# ─────────────────────────────────────────────────────────────
 
 class VisionService:
 
     def __init__(self):
-        self._model = None
-        self._model_loaded = False
-        self._use_mock = False
+        self._client = None
 
-    def _cargar_modelo(self):
-        """Carga YOLOv8 en memoria (solo la primera vez)."""
-        if self._model_loaded:
-            return
+    def _get_client(self):
+        if self._client is None:
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY no configurada en variables de entorno")
+            self._client = anthropic.Anthropic(api_key=api_key)
+        return self._client
 
-        try:
-            from ultralytics import YOLO
-
-            if MODEL_PATH.exists():
-                # Modelo fine-tuned para patologías
-                self._model = YOLO(str(MODEL_PATH))
-                print(f"[VisionService] Modelo cargado: {MODEL_PATH}")
-            else:
-                # Fallback: YOLOv8n base (detecta objetos generales)
-                # En producción reemplazar por modelo fine-tuned
-                self._model = YOLO("yolov8n.pt")
-                print("[VisionService] Usando YOLOv8n base (sin fine-tuning)")
-
-            self._model_loaded = True
-            self._use_mock = False
-
-        except ImportError:
-            print("[VisionService] ultralytics no instalado — usando análisis heurístico")
-            self._use_mock = True
-            self._model_loaded = True
-        except Exception as e:
-            print(f"[VisionService] Error cargando modelo: {e} — usando análisis heurístico")
-            self._use_mock = True
-            self._model_loaded = True
+    # ──────────────────────────────────────────
+    #  API pública
+    # ──────────────────────────────────────────
 
     def analizar_imagenes(
         self,
         imagenes_b64: List[str],
         estado_actual: str = "normal",
-        conf_threshold: float = 0.35,
+        conf_threshold: float = 0.60,
     ) -> ResultadoVision:
-        """
-        Analiza una lista de imágenes en base64 y retorna detecciones de patologías.
-
-        Args:
-            imagenes_b64: Lista de strings base64 (JPEG/PNG)
-            estado_actual: Estado de conservación declarado por el usuario
-            conf_threshold: Umbral de confianza mínimo para detectar (0.35 = 35%)
-
-        Returns:
-            ResultadoVision con detecciones, impacto en score y recomendaciones
-        """
-        if not imagenes_b64:
-            return ResultadoVision(analizado=False)
-
-        self._cargar_modelo()
 
         t0 = time.time()
-        todas_detecciones: List[Deteccion] = []
-        primera_img_anotada = ""
+        fotos: List[FotoAnalizada] = []
+        todas_dets: List[Deteccion] = []
 
-        for i, b64_str in enumerate(imagenes_b64):
+        try:
+            client = self._get_client()
+        except RuntimeError as e:
+            return ResultadoVision(
+                analizado=False,
+                advertencia=str(e),
+                nota_general="Configure ANTHROPIC_API_KEY para habilitar el análisis de patologías.",
+            )
+
+        for i, b64_raw in enumerate(imagenes_b64[:4]):  # máx 4 fotos por análisis
             try:
-                img = self._b64_a_pil(b64_str)
-                if img is None:
-                    continue
+                # Limpiar base64
+                b64_limpio = b64_raw.split(",", 1)[-1] if "," in b64_raw else b64_raw
+                media_type = "image/jpeg"
+                if b64_raw.startswith("data:image/png"): media_type = "image/png"
+                elif b64_raw.startswith("data:image/webp"): media_type = "image/webp"
 
-                if self._use_mock:
-                    dets = self._analisis_heuristico(img, conf_threshold)
-                else:
-                    dets = self._inferencia_yolo(img, conf_threshold)
+                # Llamada a Claude Vision
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1024,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_limpio,
+                                },
+                            },
+                            {"type": "text", "text": PROMPT_PERICIAL},
+                        ],
+                    }],
+                )
 
-                todas_detecciones.extend(dets)
+                # Parsear respuesta JSON
+                texto = response.content[0].text.strip()
+                # Limpiar si hay markdown
+                texto = re.sub(r"```json|```", "", texto).strip()
+                data  = json.loads(texto)
 
-                # Anotar solo la primera imagen
-                if i == 0:
-                    primera_img_anotada = self._anotar_imagen(img, dets)
+                # Filtrar por confianza mínima
+                dets_foto = []
+                for p in data.get("patologias", []):
+                    conf = float(p.get("confianza", 0))
+                    if conf < CONF_MINIMA:
+                        continue
+                    det = Deteccion(
+                        tipo=p.get("tipo", "patologia_general"),
+                        severidad=p.get("severidad", "leve"),
+                        confianza=round(conf, 2),
+                        ubicacion=p.get("ubicacion", ""),
+                        descripcion_tecnica=p.get("descripcion_tecnica", ""),
+                        dimension_estimada=p.get("dimension_estimada", ""),
+                    )
+                    dets_foto.append(det)
+                    todas_dets.append(det)
 
+                # Anotar imagen si hay detecciones
+                img_pil = self._b64_a_pil(b64_limpio)
+                img_anotada_b64 = self._anotar(img_pil, dets_foto) if img_pil else b64_limpio
+
+                fotos.append(FotoAnalizada(
+                    imagen_original_b64=b64_limpio,
+                    imagen_anotada_b64 =img_anotada_b64,
+                    detecciones=dets_foto,
+                    condicion_general=data.get("condicion_general", "—"),
+                    observaciones=data.get("observaciones_generales", ""),
+                    elemento=data.get("elemento_analizado", "—"),
+                    nombre=f"Imagen {i+1}",
+                ))
+
+            except json.JSONDecodeError:
+                # Claude no devolvió JSON válido — guardar foto sin análisis
+                b64_limpio = b64_raw.split(",",1)[-1] if "," in b64_raw else b64_raw
+                fotos.append(FotoAnalizada(
+                    imagen_original_b64=b64_limpio,
+                    imagen_anotada_b64 =b64_limpio,
+                    detecciones=[],
+                    observaciones="No se pudo parsear respuesta del análisis.",
+                    nombre=f"Imagen {i+1}",
+                ))
             except Exception as e:
-                print(f"[VisionService] Error procesando imagen {i}: {e}")
+                print(f"[Vision] Error imagen {i+1}: {e}")
                 continue
 
         elapsed = round(time.time() - t0, 2)
-
-        # Consolidar resultado
-        return self._consolidar(
-            todas_detecciones,
-            len(imagenes_b64),
-            elapsed,
-            primera_img_anotada,
-            estado_actual,
-        )
+        return self._consolidar(todas_dets, fotos, elapsed, estado_actual)
 
     # ──────────────────────────────────────────
-    #  Inferencia real YOLOv8
+    #  Anotar imagen con texto descriptivo
     # ──────────────────────────────────────────
 
-    def _inferencia_yolo(self, img: Image.Image, conf_threshold: float) -> List[Deteccion]:
-        """Ejecuta inferencia YOLOv8 real sobre una imagen PIL."""
-        import numpy as np
-        import tempfile, os
-
-        # Guardar imagen temp para YOLO
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            img.save(tmp.name, "JPEG", quality=90)
-            tmp_path = tmp.name
-
-        try:
-            resultados = self._model(tmp_path, conf=conf_threshold, verbose=False)
-        finally:
-            os.unlink(tmp_path)
-
-        detecciones = []
-        w, h = img.size
-
-        for res in resultados:
-            if res.boxes is None:
-                continue
-            for box in res.boxes:
-                cls_id  = int(box.cls[0])
-                conf    = float(box.conf[0])
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
-
-                # Mapear clase YOLO → clase de patología
-                # Si el modelo es base (no fine-tuned), filtrar solo clases relevantes
-                if MODEL_PATH.exists():
-                    clase = PATOLOGIA_CLASES.get(cls_id, f"desconocido_{cls_id}")
-                else:
-                    # Modelo base: solo pasar si confianza muy alta (probable defecto visual)
-                    if conf < 0.6:
-                        continue
-                    clase = "eflorescencia"  # placeholder para modelo base
-
-                sev = SEVERIDAD.get(clase, "leve")
-                detecciones.append(Deteccion(
-                    clase=clase,
-                    clase_id=cls_id,
-                    confianza=round(conf, 3),
-                    severidad=sev,
-                    bbox=(x1/w, y1/h, x2/w, y2/h),
-                    descripcion=self._descripcion(clase, conf),
-                ))
-
-        return detecciones
-
-    # ──────────────────────────────────────────
-    #  Análisis heurístico (fallback sin GPU/modelo)
-    # ──────────────────────────────────────────
-
-    def _analisis_heuristico(self, img: Image.Image, conf_threshold: float) -> List[Deteccion]:
+    def _anotar(self, img: Image.Image, dets: List[Deteccion]) -> str:
         """
-        Análisis de imagen por características de color/textura cuando
-        YOLOv8 no está disponible. Detecta indicadores visuales básicos.
+        Como Claude no da coordenadas exactas de bbox,
+        anotamos con etiquetas de texto en la parte inferior.
         """
-        import numpy as np
+        if not dets:
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=88)
+            return base64.b64encode(buf.getvalue()).decode()
 
-        img_rgb = img.convert("RGB")
-        # Redimensionar para análisis rápido
-        small = img_rgb.resize((320, 240))
-        arr = np.array(small, dtype=np.float32)
+        ann   = img.copy().convert("RGB")
+        W, H  = ann.size
+        draw  = ImageDraw.Draw(ann)
+        COLORES = {"leve":(255,200,0), "moderada":(255,120,0), "critica":(220,20,60)}
 
-        detecciones = []
-        h_img, w_img = img.size[1], img.size[0]
+        # Franja inferior con hallazgos
+        franja_h  = min(30 * len(dets) + 20, H // 3)
+        franja_y  = H - franja_h
+        draw.rectangle([0, franja_y, W, H], fill=(10,20,40,200))
 
-        # ── Detección de manchas oscuras (grietas, humedad) ──
-        gray = 0.299*arr[:,:,0] + 0.587*arr[:,:,1] + 0.114*arr[:,:,2]
-        dark_mask = gray < 60
-        dark_ratio = dark_mask.mean()
+        # Línea separadora
+        draw.rectangle([0, franja_y, W, franja_y+2], fill=(200,16,46))
 
-        if dark_ratio > 0.08:
-            conf = min(0.40 + dark_ratio * 2, 0.85)
-            if conf >= conf_threshold:
-                clase = "grieta_pasiva" if dark_ratio < 0.15 else "grieta_activa"
-                detecciones.append(Deteccion(
-                    clase=clase,
-                    clase_id=2 if clase=="grieta_pasiva" else 1,
-                    confianza=round(conf, 3),
-                    severidad=SEVERIDAD[clase],
-                    bbox=(0.1, 0.2, 0.9, 0.8),
-                    descripcion=self._descripcion(clase, conf),
-                ))
+        y = franja_y + 8
+        for det in dets:
+            color = COLORES.get(det.severidad, (255,255,255))
+            sev_label = {"leve":"⚠ LEVE","moderada":"🔶 MOD","critica":"🔴 CRIT"}.get(det.severidad,"")
+            label = f"{sev_label} {det.tipo.replace('_',' ').upper()} ({det.confianza:.0%}) — {det.ubicacion}"
+            draw.text((10, y), label, fill=color)
+            y += 28
+            if y > H - 10:
+                break
 
-        # ── Detección de eflorescencia (zonas blancas/grises anómalas) ──
-        white_mask = (arr[:,:,0] > 200) & (arr[:,:,1] > 200) & (arr[:,:,2] > 200)
-        # Excluir si toda la imagen es clara (fondo blanco)
-        if white_mask.mean() > 0.05 and white_mask.mean() < 0.60:
-            conf = min(0.38 + white_mask.mean(), 0.78)
-            if conf >= conf_threshold:
-                detecciones.append(Deteccion(
-                    clase="eflorescencia",
-                    clase_id=3,
-                    confianza=round(conf, 3),
-                    severidad="leve",
-                    bbox=(0.05, 0.05, 0.95, 0.95),
-                    descripcion=self._descripcion("eflorescencia", conf),
-                ))
-
-        # ── Detección de corrosión (tonos oxidados rojizos) ──
-        rojo   = arr[:,:,0]
-        verde  = arr[:,:,1]
-        azul   = arr[:,:,2]
-        rust_mask = (rojo > 120) & (verde < 80) & (azul < 60) & (rojo > verde * 1.8)
-        rust_ratio = rust_mask.mean()
-
-        if rust_ratio > 0.03:
-            conf = min(0.45 + rust_ratio * 3, 0.88)
-            if conf >= conf_threshold:
-                detecciones.append(Deteccion(
-                    clase="corrosion_acero",
-                    clase_id=6,
-                    confianza=round(conf, 3),
-                    severidad="critica",
-                    bbox=(0.1, 0.3, 0.9, 0.9),
-                    descripcion=self._descripcion("corrosion_acero", conf),
-                ))
-
-        # ── Detección de humedad (tonos verdosos / manchas oscuras irregulares) ──
-        humid_mask = (verde > rojo * 1.1) & (verde > 80) & (azul < verde * 0.9)
-        if humid_mask.mean() > 0.06:
-            conf = min(0.36 + humid_mask.mean() * 2, 0.75)
-            if conf >= conf_threshold:
-                detecciones.append(Deteccion(
-                    clase="humedad",
-                    clase_id=4,
-                    confianza=round(conf, 3),
-                    severidad="moderada",
-                    bbox=(0.0, 0.5, 1.0, 1.0),
-                    descripcion=self._descripcion("humedad", conf),
-                ))
-
-        return detecciones
+        buf = io.BytesIO()
+        ann.save(buf, "JPEG", quality=88)
+        return base64.b64encode(buf.getvalue()).decode()
 
     # ──────────────────────────────────────────
-    #  Consolidar resultado
+    #  Consolidar resultado final
     # ──────────────────────────────────────────
 
     def _consolidar(
-        self,
-        detecciones: List[Deteccion],
-        n_imagenes: int,
-        elapsed: float,
-        img_anotada_b64: str,
-        estado_actual: str,
+        self, dets: List[Deteccion], fotos: List[FotoAnalizada],
+        elapsed: float, estado_actual: str
     ) -> ResultadoVision:
 
-        criticas  = [d for d in detecciones if d.severidad == "critica"]
-        moderadas = [d for d in detecciones if d.severidad == "moderada"]
-        leves     = [d for d in detecciones if d.severidad == "leve"]
+        criticas  = [d for d in dets if d.severidad == "critica"]
+        moderadas = [d for d in dets if d.severidad == "moderada"]
+        leves     = [d for d in dets if d.severidad == "leve"]
 
-        # Ajuste al score de confianza
-        ajuste = 0.0
-        ajuste += len(criticas)  * PENALIZACION_SCORE["critica"]
-        ajuste += len(moderadas) * PENALIZACION_SCORE["moderada"]
-        ajuste += len(leves)     * PENALIZACION_SCORE["leve"]
-        # Si no hay patologías, el análisis suma confianza
-        if not detecciones:
-            ajuste = +5.0   # imagen analizada y limpia → +5 al score
-        ajuste = max(ajuste, -20.0)  # tope mínimo -20 puntos
+        # Ajuste score
+        if not dets:
+            ajuste = +5.0
+        else:
+            ajuste  = len(criticas)  * PENALIZACION_SCORE["critica"]
+            ajuste += len(moderadas) * PENALIZACION_SCORE["moderada"]
+            ajuste += len(leves)     * PENALIZACION_SCORE["leve"]
+            ajuste  = max(ajuste, -20.0)
 
-        # Estado de conservación sugerido
-        degradacion = 0
-        if criticas:
-            degradacion = DEGRADACION_ESTADO["critica"]
-        elif moderadas:
-            degradacion = DEGRADACION_ESTADO["moderada"]
-        elif leves:
-            degradacion = DEGRADACION_ESTADO["leve"]
+        # Penalización valor
+        pen = min(
+            len(criticas)*PENALIZACION_VALOR["critica"] +
+            len(moderadas)*PENALIZACION_VALOR["moderada"] +
+            len(leves)*PENALIZACION_VALOR["leve"], 25.0
+        )
 
-        idx_actual = ORDEN_ESTADOS.index(estado_actual) if estado_actual in ORDEN_ESTADOS else 2
-        idx_sugerido = min(idx_actual + degradacion, len(ORDEN_ESTADOS) - 1)
-        estado_sugerido = ORDEN_ESTADOS[idx_sugerido]
-
-        # Penalización sobre el valor (%)
-        penalizacion_valor = 0.0
-        penalizacion_valor += len(criticas)  * 3.5
-        penalizacion_valor += len(moderadas) * 1.5
-        penalizacion_valor += len(leves)     * 0.5
-        penalizacion_valor = min(penalizacion_valor, 25.0)
-
-        # Recomendaciones
-        recomendaciones = self._generar_recomendaciones(detecciones)
+        # Estado sugerido
+        deg = 2 if criticas else (1 if moderadas else 0)
+        idx = ORDEN_ESTADOS.index(estado_actual) if estado_actual in ORDEN_ESTADOS else 2
+        estado_sug = ORDEN_ESTADOS[min(idx+deg, len(ORDEN_ESTADOS)-1)]
 
         # Nota general
-        if not detecciones:
-            nota = "Análisis de imagen completado. No se detectaron patologías estructurales visibles. El inmueble presenta condiciones aparentes satisfactorias."
+        if not dets:
+            nota = (f"Análisis Claude Vision completado ({elapsed:.1f}s). "
+                    "No se detectaron patologías estructurales visibles "
+                    "con confianza ≥60%. Condiciones aparentes satisfactorias.")
         elif criticas:
-            nota = f"Se detectaron {len(criticas)} patología(s) crítica(s). Se recomienda inspección presencial urgente por ingeniero estructural colegiado antes de cerrar cualquier operación."
+            nota = (f"ALERTA: {len(criticas)} patología(s) crítica(s) detectada(s). "
+                    "Inspección presencial urgente por ingeniero estructural. "
+                    "No cerrar operación inmobiliaria sin evaluación técnica.")
         elif moderadas:
-            nota = f"Se detectaron {len(moderadas)} patología(s) de severidad moderada. Se recomienda evaluación técnica y presupuesto de reparación."
+            nota = (f"{len(moderadas)} patología(s) moderada(s) detectada(s). "
+                    "Evaluar costo de reparación antes de fijar precio definitivo.")
         else:
-            nota = f"Se detectaron {len(leves)} patología(s) leve(s). Mantenimiento preventivo recomendado."
+            nota = f"{len(leves)} patología(s) leve(s). Mantenimiento preventivo recomendado."
+
+        # Recomendaciones
+        tipos = {d.tipo for d in dets}
+        recs  = []
+        if {"grieta_activa","asentamiento","falla_estructural"} & tipos:
+            recs.append("Contratar ingeniero estructural colegiado — inspección presencial urgente.")
+            recs.append("Instalar testigos en grietas activas para monitorear progresión.")
+        if "corrosion_acero" in tipos:
+            recs.append("Evaluar sección residual del acero expuesto. Aplicar tratamiento anticorrosivo.")
+        if {"humedad","eflorescencia"} & tipos:
+            recs.append("Revisar sistema de impermeabilización y drenajes pluviales.")
+        if {"desportillado","desprendimiento"} & tipos:
+            recs.append("Verificar adherencia del revestimiento en área circundante.")
+        if {"grieta_capilar","grieta_pasiva"} & tipos:
+            recs.append("Sellar fisuras con masilla elástica o inyección de resina epóxica.")
+        if "carbonatacion" in tipos:
+            recs.append("Realizar prueba de carbonatación con fenolftaleína en núcleos extraídos.")
+        if not recs:
+            recs.append("Mantenimiento preventivo periódico recomendado.")
 
         return ResultadoVision(
             analizado=True,
-            imagenes_procesadas=n_imagenes,
-            tiempo_inferencia_s=elapsed,
-            detecciones=detecciones,
-            total_patologias=len(detecciones),
+            motor="Claude Vision API (claude-sonnet-4-20250514)",
+            imagenes_procesadas=len(fotos),
+            tiempo_s=elapsed,
+            fotos=fotos,
+            total_patologias=len(dets),
             patologias_criticas=len(criticas),
             patologias_moderadas=len(moderadas),
             patologias_leves=len(leves),
             ajuste_score=round(ajuste, 2),
-            estado_sugerido=estado_sugerido,
-            penalizacion_valor_pct=round(penalizacion_valor, 2),
-            imagen_anotada_b64=img_anotada_b64,
-            recomendaciones=recomendaciones,
+            penalizacion_valor_pct=round(pen, 2),
+            estado_sugerido=estado_sug,
+            recomendaciones=recs,
             nota_general=nota,
         )
 
-    # ──────────────────────────────────────────
-    #  Helpers
-    # ──────────────────────────────────────────
-
-    def _b64_a_pil(self, b64_str: str) -> Optional[Image.Image]:
+    def _b64_a_pil(self, b64: str) -> Optional[Image.Image]:
         try:
-            if "," in b64_str:
-                b64_str = b64_str.split(",", 1)[1]
-            raw = base64.b64decode(b64_str)
-            return Image.open(io.BytesIO(raw)).convert("RGB")
+            return Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
         except Exception as e:
-            print(f"[VisionService] Error decodificando imagen: {e}")
+            print(f"[Vision] Error PIL: {e}")
             return None
 
-    def _anotar_imagen(self, img: Image.Image, detecciones: List[Deteccion]) -> str:
-        """Dibuja bounding boxes sobre la imagen y retorna base64."""
-        try:
-            annotated = img.copy().convert("RGB")
-            draw = ImageDraw.Draw(annotated)
-            w, h = annotated.size
 
-            for det in detecciones:
-                color = COLORES_BBOX.get(det.severidad, (255, 255, 0))
-                x1, y1, x2, y2 = det.bbox
-                px1, py1 = int(x1*w), int(y1*h)
-                px2, py2 = int(x2*w), int(y2*h)
-
-                # Rectángulo con borde grueso
-                for offset in range(3):
-                    draw.rectangle(
-                        [px1-offset, py1-offset, px2+offset, py2+offset],
-                        outline=color
-                    )
-
-                # Etiqueta
-                label = f"{det.clase.replace('_',' ').title()} {det.confianza:.0%}"
-                draw.rectangle([px1, py1-18, px1+len(label)*7, py1], fill=color)
-                draw.text((px1+2, py1-16), label, fill=(0, 0, 0))
-
-            buf = io.BytesIO()
-            annotated.save(buf, "JPEG", quality=88)
-            return base64.b64encode(buf.getvalue()).decode()
-        except Exception as e:
-            print(f"[VisionService] Error anotando imagen: {e}")
-            return ""
-
-    def _descripcion(self, clase: str, conf: float) -> str:
-        descs = {
-            "grieta_capilar":  "Fisura capilar superficial (ancho < 0.2mm). Probable origen térmico o de retracción.",
-            "grieta_activa":   "Grieta activa en progresión (ancho > 0.5mm). Requiere monitoreo estructural inmediato.",
-            "grieta_pasiva":   "Grieta estabilizada. Sellado preventivo recomendado.",
-            "eflorescencia":   "Depósitos de sales en superficie. Indica filtración de agua por capilaridad.",
-            "humedad":         "Mancha de humedad activa o residual. Verificar impermeabilización.",
-            "desportillado":   "Pérdida de material de revestimiento. Exposición del sustrato estructural.",
-            "corrosion_acero": "Corrosión de armadura expuesta. Reducción de sección de acero. Urgente.",
-            "asentamiento":    "Deformación geométrica compatible con asentamiento diferencial.",
-            "desprendimiento": "Desprendimiento de revestimiento o placa de fachada.",
-            "carbonatacion":   "Probable carbonatación del concreto. Verificar con fenolftaleína.",
-        }
-        return descs.get(clase, "Patología estructural detectada. Requiere evaluación presencial.")
-
-    def _generar_recomendaciones(self, detecciones: List[Deteccion]) -> List[str]:
-        recs = []
-        clases_detectadas = {d.clase for d in detecciones}
-
-        if "grieta_activa" in clases_detectadas or "asentamiento" in clases_detectadas:
-            recs.append("Contratar ingeniero estructural colegiado para inspección presencial urgente.")
-            recs.append("Instalar testigos de yeso en grietas activas para monitorear progresión.")
-
-        if "corrosion_acero" in clases_detectadas:
-            recs.append("Evaluar sección residual del acero de refuerzo expuesto.")
-            recs.append("Aplicar tratamiento anticorrosivo e inyección epóxica según norma COVENIN.")
-
-        if "humedad" in clases_detectadas or "eflorescencia" in clases_detectadas:
-            recs.append("Inspeccionar sistema de impermeabilización y drenajes pluviales.")
-            recs.append("Aplicar tratamiento hidrófugo en zonas afectadas.")
-
-        if "desportillado" in clases_detectadas or "desprendimiento" in clases_detectadas:
-            recs.append("Verificar adherencia del revestimiento en área circundante.")
-            recs.append("Restituir material faltante con mortero compatible con el sustrato.")
-
-        if "grieta_capilar" in clases_detectadas or "grieta_pasiva" in clases_detectadas:
-            recs.append("Sellar fisuras con masilla elástica o inyección de resina epóxica.")
-
-        if "carbonatacion" in clases_detectadas:
-            recs.append("Realizar prueba de carbonatación con fenolftaleína en testigos extraídos.")
-
-        if not recs:
-            recs.append("Mantenimiento preventivo periódico recomendado (pintura, sellantes, limpieza).")
-
-        return recs
-
-
-# Instancia singleton
 vision_service = VisionService()
