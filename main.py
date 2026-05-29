@@ -61,7 +61,7 @@ ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "null",   # file:// requests
     # Agregar dominio de producción aquí:
-    # "https://valumetricsai.com",
+    # "https://valumetricsai.vercel.app",
 ]
 
 app.add_middleware(
@@ -328,6 +328,8 @@ async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token)
         direccion=req.direccion,
         ciudad=req.ciudad,
         zona_tipo=req.zona_tipo,
+        pais=req.pais,
+        jerarquia_ciudad=req.jerarquia_ciudad,
         zona_clase=req.zona_clase,
         zona_acceso=req.zona_acceso,
         zona_vias=req.zona_vias,
@@ -489,6 +491,8 @@ async def calculate_anonimo(req: ValuationRequest, request: Request):
         tipo_inmueble=req.tipo_inmueble,
         direccion=req.direccion, ciudad=req.ciudad,
         zona_tipo=req.zona_tipo,
+        pais=req.pais,
+        jerarquia_ciudad=req.jerarquia_ciudad,
         zona_clase=req.zona_clase, zona_acceso=req.zona_acceso,
         zona_vias=req.zona_vias, zona_agua=req.zona_agua,
         zona_electricidad=req.zona_electricidad,

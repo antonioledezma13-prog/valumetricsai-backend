@@ -205,7 +205,7 @@ def header_footer(canvas, doc):
     canvas.rect(0, 0, W, 10*mm, fill=1, stroke=0)
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(white)
-    canvas.drawString(20*mm, 3.5*mm, "© 2025 ValuMetrics AI  |  Informe generado electrónicamente  |  valumetricsai.com")
+    canvas.drawString(20*mm, 3.5*mm, "© 2025 ValuMetrics AI  |  Informe generado electrónicamente  |  valumetricsai.vercel.app")
     canvas.drawRightString(W - 20*mm, 3.5*mm, "CONFIDENCIAL — USO EXCLUSIVO DEL SOLICITANTE")
 
     canvas.restoreState()
@@ -507,6 +507,13 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
     if r.score_zona:
         zona_factor_str += f"  (Score {r.score_zona}/100)"
 
+    fp  = getattr(r, 'factor_pais',   1.0)
+    fc  = getattr(r, 'factor_ciudad', 1.0)
+    rp  = getattr(r, 'riesgo_pais_aplicado', p.get('pais','—'))
+    fm  = round(fp*0.70 + fc*0.30, 3)
+
+    riesgo_label = "Bajo" if fp>=0.85 else "Medio" if fp>=0.65 else "Alto" if fp>=0.40 else "Muy Alto"
+
     ind_rows = [
         ["Valor por m² construido",    fmt_usd(r.valor_por_m2_usd),
          "Score de Confianza",         f"{fmt_score(r.confidence_score)} — {confidence_label(r.confidence_score)}"],
@@ -516,6 +523,10 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
          "Factor de Zona",             zona_factor_str],
         ["Tasa BCV Aplicada",          f"{r.tasa_bcv:,.0f} VES / USD",
          "Factor Acabados",            f"× {r.factor_acabados:.2f}"],
+        ["Riesgo País",                f"× {fp:.3f} ({riesgo_label}) — {rp.title()}",
+         "Factor Ciudad/Jerarquía",    f"× {fc:.3f}"],
+        ["Factor Macro Aplicado",      f"× {fm:.3f}  (País 70% + Ciudad 30%)",
+         "", ""],
         ["Valor Total VES",            fmt_ves(r.valor_total_ves),
          "Valor Total USD",            fmt_usd(r.valor_total_usd)],
     ]

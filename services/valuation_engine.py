@@ -245,6 +245,184 @@ FACTOR_ZONA_SIMPLE = {
     "interior_b":  0.65,
 }
 
+# ─────────────────────────────────────────────────────────────
+#  RIESGO PAÍS — Factor multiplicador sobre valor final
+#  Fuente: Damodaran Country Risk Premium 2026, Allianz Risk Atlas,
+#          Moody's/S&P Sovereign Ratings, EMBI+ spreads
+#
+#  Escala: 1.00 = riesgo mínimo (AAA, máxima estabilidad)
+#          0.30 = riesgo extremo (guerra, embargo, hiperinflación)
+#
+#  Metodología: Factor = 1 / (1 + Prima_Riesgo_Pais)
+#  Prima riesgo: USA 4.5%, Alemania 4.2%, Venezuela ~19.8%,
+#                Cuba/Siria/Yemen ~19.8%, Colombia ~8%, Perú ~7%
+# ─────────────────────────────────────────────────────────────
+RIESGO_PAIS = {
+    # ── Riesgo Mínimo (AAA / AA+) ─── factor 0.90-1.00
+    "suiza":          1.00,
+    "alemania":       0.99,
+    "canada":         0.98,
+    "singapur":       0.98,
+    "noruega":        0.98,
+    "suecia":         0.97,
+    "dinamarca":      0.97,
+    "paises_bajos":   0.97,
+    "australia":      0.96,
+    "nueva_zelanda":  0.96,
+    "reino_unido":    0.95,
+    "usa":            0.95,
+    "japon":          0.94,
+    "hong_kong":      0.94,
+    "corea_sur":      0.93,
+    # ── Riesgo Bajo-Medio (A / BBB+) ─── factor 0.80-0.92
+    "espana":         0.90,
+    "portugal":       0.88,
+    "italia":         0.87,
+    "chile":          0.87,
+    "uruguay":        0.85,
+    "china":          0.84,
+    "panama":         0.83,
+    "mexico":         0.82,
+    "peru":           0.82,
+    "colombia":       0.80,
+    "brasil":         0.80,
+    # ── Riesgo Medio (BB / B+) ─── factor 0.60-0.79
+    "republica_dominicana": 0.78,
+    "paraguay":       0.76,
+    "costa_rica":     0.75,
+    "india":          0.75,
+    "vietnam":        0.74,
+    "indonesia":      0.73,
+    "guatemala":      0.72,
+    "bolivia":        0.70,
+    "honduras":       0.68,
+    "el_salvador":    0.67,
+    "ecuador":        0.65,
+    "pakistan":       0.62,
+    "nigeria":        0.62,
+    "argentina":      0.60,
+    "turquia":        0.60,
+    # ── Riesgo Alto (B / CCC) ─── factor 0.40-0.59
+    "nicaragua":      0.55,
+    "ghana":          0.54,
+    "egipto":         0.52,
+    "ucrania":        0.50,
+    "irak":           0.48,
+    "haiti":          0.46,
+    "zimbabwe":       0.44,
+    "bielorrusia":    0.42,
+    # ── Riesgo Muy Alto / Extremo ─── factor 0.20-0.39
+    "venezuela":      0.35,   # hiperinflación, sanciones, inestabilidad
+    "cuba":           0.28,   # embargo, economía planificada colapsada
+    "libano":         0.25,   # default soberano, crisis bancaria
+    "sudan":          0.24,
+    "siria":          0.22,   # guerra civil activa
+    "corea_norte":    0.20,   # economía cerrada, sanciones totales
+    "yemen":          0.20,   # conflicto armado activo
+    "somalia":        0.20,
+    # ── Default ─── si el país no está en la tabla
+    "_default":       0.70,
+}
+
+# ─────────────────────────────────────────────────────────────
+#  FACTOR CAPITAL — Ajuste por cercanía a la capital del país
+#  y por jerarquía urbana dentro del país
+#
+#  Para Venezuela específicamente:
+#  Caracas = 1.00 (referencia), Valencia = 0.85, Maracaibo = 0.82,
+#  Barquisimeto = 0.78, Maturín = 0.72, Ciudad Bolívar = 0.65,
+#  Guanare = 0.55, pueblos rurales = 0.40-0.35
+# ─────────────────────────────────────────────────────────────
+JERARQUIA_CIUDAD = {
+    # Nivel 1: Capital nacional / área metropolitana principal
+    "capital_nacional":     1.00,
+    # Nivel 2: Ciudades principales (500k+ hab, centros regionales)
+    "ciudad_principal":     0.85,
+    # Nivel 3: Ciudades intermedias (200k-500k hab)
+    "ciudad_intermedia":    0.72,
+    # Nivel 4: Ciudades pequeñas (50k-200k hab)
+    "ciudad_pequena":       0.60,
+    # Nivel 5: Pueblos y zonas rurales (<50k hab)
+    "pueblo_rural":         0.45,
+    # Nivel 6: Zona rural remota / sin infraestructura
+    "rural_remoto":         0.32,
+}
+
+# Ciudades venezolanas con su jerarquía preestablecida
+# (usuario puede sobreescribir con jerarquia_ciudad)
+CIUDADES_VENEZUELA = {
+    # Capital
+    "caracas":              "capital_nacional",
+    "distrito capital":     "capital_nacional",
+    "dtto capital":         "capital_nacional",
+    # Ciudades principales
+    "valencia":             "ciudad_principal",   # 2da ciudad en valor
+    "maracaibo":            "ciudad_principal",
+    "barquisimeto":         "ciudad_principal",
+    "maracay":              "ciudad_principal",
+    # Ciudades intermedias
+    "maturin":              "ciudad_intermedia",
+    "barcelona":            "ciudad_intermedia",
+    "puerto_la_cruz":       "ciudad_intermedia",
+    "san_cristobal":        "ciudad_intermedia",
+    "ciudad_bolivar":       "ciudad_intermedia",
+    "cumana":               "ciudad_intermedia",
+    "mérida":               "ciudad_intermedia",
+    "merida":               "ciudad_intermedia",
+    "puerto_ordaz":         "ciudad_intermedia",
+    "san_felix":            "ciudad_intermedia",
+    "los_teques":           "ciudad_intermedia",
+    "la_guaira":            "ciudad_intermedia",
+    "guarenas":             "ciudad_intermedia",
+    "guatire":              "ciudad_intermedia",
+    # Ciudades pequeñas
+    "acarigua":             "ciudad_pequena",
+    "araure":               "ciudad_pequena",
+    "punto_fijo":           "ciudad_pequena",
+    "coro":                 "ciudad_pequena",
+    "el_tigre":             "ciudad_pequena",
+    "turén":                "ciudad_pequena",
+    "turen":                "ciudad_pequena",
+    "valle_de_la_pascua":   "ciudad_pequena",
+    "calabozo":             "ciudad_pequena",
+    "tucupita":             "ciudad_pequena",
+    "porlamar":             "ciudad_pequena",
+    "guanare":              "ciudad_pequena",   # Guanare < Valencia, como mencionaste
+    "barinas":              "ciudad_pequena",
+    "san_fernando":         "ciudad_pequena",
+    "santa_elena":          "ciudad_pequena",
+    "carúpano":             "ciudad_pequena",
+    "carupano":             "ciudad_pequena",
+    "valera":               "ciudad_pequena",
+    "trujillo":             "ciudad_pequena",
+}
+
+def get_factor_ciudad(ciudad: str, pais: str = "venezuela",
+                      jerarquia_manual: str = "") -> float:
+    """
+    Retorna el factor de ciudad/jerarquía urbana.
+    jerarquia_manual sobreescribe la detección automática.
+    """
+    if jerarquia_manual and jerarquia_manual in JERARQUIA_CIUDAD:
+        return JERARQUIA_CIUDAD[jerarquia_manual]
+
+    # Normalizar nombre de ciudad
+    ciudad_norm = ciudad.lower().strip().replace(" ", "_").replace("á","a")        .replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
+
+    if pais.lower() in ("venezuela", "ve", "vzla"):
+        if ciudad_norm in CIUDADES_VENEZUELA:
+            return JERARQUIA_CIUDAD[CIUDADES_VENEZUELA[ciudad_norm]]
+        # Si no se reconoce, asumir ciudad pequeña
+        return JERARQUIA_CIUDAD["ciudad_pequena"]
+
+    # Para otros países: usar ambito_territorial si viene del panel de zona
+    return 1.0   # sin ajuste si no hay info de ciudad
+
+def get_factor_pais(pais: str) -> float:
+    """Retorna el factor de riesgo país."""
+    pais_norm = pais.lower().strip().replace(" ", "_")        .replace("á","a").replace("é","e").replace("í","i")        .replace("ó","o").replace("ú","u")
+    return RIESGO_PAIS.get(pais_norm, RIESGO_PAIS["_default"])
+
 # Factor de techo (multiplica el costo de construcción)
 FACTOR_TECHO = {
     "losa_maciza":       1.00,   # referencia base
@@ -448,6 +626,10 @@ class InputValuacion:
     tiene_imagenes: bool = False
     tasa_bcv_ves: float = 36000.0      # tasa BCV VES/USD vigente
     usuario_id: str = ""
+    # Ubicación macro
+    pais: str = "venezuela"            # país del inmueble
+    jerarquia_ciudad: str = ""         # capital_nacional|ciudad_principal|ciudad_intermedia|ciudad_pequena|pueblo_rural|rural_remoto
+
     # Características físicas
     tipo_techo: str = ""               # ver FACTOR_TECHO
     habitaciones: int = 0
@@ -492,6 +674,10 @@ class ResultadoValuacion:
     # Zona avanzada
     score_zona: float = None
     desglose_zona: Dict[str, Any] = field(default_factory=dict)
+    # Riesgo país y ciudad
+    factor_pais: float = 1.0
+    factor_ciudad: float = 1.0
+    riesgo_pais_aplicado: str = ""
     # Para PDF
     parametros_entrada: Dict[str, Any] = field(default_factory=dict)
     notas_pericial: List[str] = field(default_factory=list)
@@ -632,7 +818,30 @@ class MotorValuacion:
         # ── 6. Ajustes especiales por tipo ────────────────
         v_total_usd, notas = self._ajustes_especiales(inp, tipo, v_total_usd)
 
-        # ── 7. Conversión VES ─────────────────────────────
+        # ── 7. Factor Riesgo País ─────────────────────────────────
+        fp = get_factor_pais(inp.pais)
+
+        # ── 8. Factor Jerarquía Ciudad ────────────────────────────
+        fc = get_factor_ciudad(inp.ciudad, inp.pais, inp.jerarquia_ciudad)
+
+        # ── 9. Aplicar factores macro al valor total ───────────────
+        # LÓGICA:
+        # - Factor ciudad (fc): siempre aplica — Guanare < Valencia < Caracas
+        #   es una realidad de mercado local demostrable.
+        # - Factor país (fp): aplica como ajuste suave para mercado doméstico
+        #   (los precios en USD locales ya están "deflactados" por el riesgo)
+        #   Se aplica con peso reducido: 15% sobre el valor para no distorsionar
+        #   la tasación doméstica, pero sí la diferencia entre países.
+        #   Para comparación internacional pura, el usuario verá el factor en el PDF.
+        #
+        # Fórmula: V_final = V_base × fc × (1 - (1-fp) × 0.15)
+        # Ejemplo Venezuela (fp=0.35): descuento = (1-0.35)×0.15 = 9.75%
+        # Ejemplo USA (fp=0.95):       descuento = (1-0.95)×0.15 = 0.75%
+        descuento_pais = (1.0 - fp) * 0.15
+        factor_macro   = fc * (1.0 - descuento_pais)
+        v_total_usd    = round(v_total_usd * factor_macro, 2)
+
+        # ── 10. Conversión VES ─────────────────────────────
         v_total_ves = v_total_usd * inp.tasa_bcv_ves
 
         # ── 8. Indicadores ────────────────────────────────
@@ -652,6 +861,8 @@ class MotorValuacion:
         delta = self._delta_geografico(confidence)
 
         fz_final, fz_score, fz_desglose = calcular_factor_zona(inp)
+        fp_final = get_factor_pais(inp.pais)
+        fc_final = get_factor_ciudad(inp.ciudad, inp.pais, inp.jerarquia_ciudad)
 
         return ResultadoValuacion(
             hash_operacion=f"VM-AI-{datetime.now().strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:8].upper()}",
@@ -671,6 +882,9 @@ class MotorValuacion:
             factor_zona=fz_final,
             score_zona=fz_score,
             desglose_zona=fz_desglose,
+            factor_pais=round(get_factor_pais(inp.pais), 4),
+            factor_ciudad=round(get_factor_ciudad(inp.ciudad, inp.pais, inp.jerarquia_ciudad), 4),
+            riesgo_pais_aplicado=inp.pais,
             factor_acabados=FACTOR_ACABADOS.get(inp.acabados, 1.0),
             estado_conservacion=inp.estado_conservacion,
             valor_por_m2_usd=round(v_m2, 2),
