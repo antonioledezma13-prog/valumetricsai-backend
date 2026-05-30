@@ -507,13 +507,6 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
     if r.score_zona:
         zona_factor_str += f"  (Score {r.score_zona}/100)"
 
-    fp  = getattr(r, 'factor_pais',   1.0)
-    fc  = getattr(r, 'factor_ciudad', 1.0)
-    rp  = getattr(r, 'riesgo_pais_aplicado', p.get('pais','—'))
-    fm  = round(fp*0.70 + fc*0.30, 3)
-
-    riesgo_label = "Bajo" if fp>=0.85 else "Medio" if fp>=0.65 else "Alto" if fp>=0.40 else "Muy Alto"
-
     ind_rows = [
         ["Valor por m² construido",    fmt_usd(r.valor_por_m2_usd),
          "Score de Confianza",         f"{fmt_score(r.confidence_score)} — {confidence_label(r.confidence_score)}"],
@@ -523,10 +516,6 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
          "Factor de Zona",             zona_factor_str],
         ["Tasa BCV Aplicada",          f"{r.tasa_bcv:,.0f} VES / USD",
          "Factor Acabados",            f"× {r.factor_acabados:.2f}"],
-        ["Riesgo País",                f"× {fp:.3f} ({riesgo_label}) — {rp.title()}",
-         "Factor Ciudad/Jerarquía",    f"× {fc:.3f}"],
-        ["Factor Macro Aplicado",      f"× {fm:.3f}  (País 70% + Ciudad 30%)",
-         "", ""],
         ["Valor Total VES",            fmt_ves(r.valor_total_ves),
          "Valor Total USD",            fmt_usd(r.valor_total_usd)],
     ]
@@ -636,6 +625,181 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
     )))
     story.append(Spacer(1, 6*mm))
 
+
+    # ══════════════════════════════════════════
+    #  SECCION 6: FUNDAMENTACION NORMATIVA
+    # ══════════════════════════════════════════
+
+    story.append(Paragraph("6. FUNDAMENTACION METODOLOGICA Y CUMPLIMIENTO NORMATIVO", S["seccion_titulo"]))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=ROJO_DIA, spaceAfter=6))
+
+    # Base de Valor
+    bv_data = [[
+        Paragraph("BASE DE VALOR APLICADA", ParagraphStyle("bvh",
+            fontName="Helvetica-Bold", fontSize=9, textColor=white)),
+        Paragraph("ESTANDAR DE REFERENCIA", ParagraphStyle("bvh2",
+            fontName="Helvetica-Bold", fontSize=9, textColor=white)),
+    ],[
+        Paragraph(
+            "<b>Valor de Mercado</b> — Precio estimado por el cual el inmueble se intercambiaría "
+            "en la fecha de valuacion entre un comprador y un vendedor actuando libremente, "
+            "con conocimiento del mercado, sin compulsion y en condiciones de libre competencia.",
+            ParagraphStyle("bvb", fontName="Helvetica", fontSize=8.5, textColor=GRIS_OSC, leading=13)),
+        Paragraph(
+            "IVS 104 (IVSC 2022) — International Valuation Standards\n"
+            "USPAP — Uniform Standards of Professional Appraisal Practice\n"
+            "Norma COVENIN 2521 (Venezuela)\n"
+            "Metodo Ross-Heidecke — Enfoque de Costo Depreciado",
+            ParagraphStyle("bvb2", fontName="Helvetica", fontSize=8.5, textColor=GRIS_OSC, leading=14)),
+    ]]
+    bv_t = Table(bv_data, colWidths=[90*mm, 80*mm])
+    bv_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,0), AZUL_REY),
+        ("BACKGROUND",    (0,1),(-1,1), GRIS_FONDO),
+        ("GRID",          (0,0),(-1,-1), 0.4, HexColor("#DDE1E7")),
+        ("TOPPADDING",    (0,0),(-1,-1), 7),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 7),
+        ("LEFTPADDING",   (0,0),(-1,-1), 8),
+        ("VALIGN",        (0,0),(-1,-1), "TOP"),
+    ]))
+    story.append(bv_t)
+    story.append(Spacer(1, 5*mm))
+
+    # Declaracion de Independencia
+    story.append(Paragraph(
+        "Declaracion de Independencia y Objetividad",
+        ParagraphStyle("indh", fontName="Helvetica-Bold", fontSize=9,
+            textColor=AZUL_REY, spaceBefore=4, spaceAfter=4)))
+    story.append(Paragraph(
+        "ValuMetrics AI es una plataforma tecnologica de apoyo pericial que opera con total "
+        "independencia de cualquier parte interesada en la transaccion del inmueble valuado. "
+        "El sistema <b>no posee interes comercial</b> en el resultado de la valuacion, no "
+        "percibe comision por compraventa ni tiene vinculos con entidades financieras, "
+        "inmobiliarias o constructoras que puedan generar sesgo en el valor calculado. "
+        "Los algoritmos aplicados son deterministas y reproducibles: ante los mismos datos "
+        "de entrada, el sistema produce invariablemente el mismo resultado, eliminando la "
+        "subjetividad inherente al proceso manual de tasacion.",
+        ParagraphStyle("indp", fontName="Helvetica", fontSize=8.5,
+            textColor=GRIS_OSC, leading=13, spaceAfter=5)))
+
+    # Metodo Ross-Heidecke
+    story.append(Paragraph(
+        "Enfoque de Costo — Metodo Ross-Heidecke (Fundamento Legal y Tecnico)",
+        ParagraphStyle("meth", fontName="Helvetica-Bold", fontSize=9,
+            textColor=AZUL_REY, spaceBefore=4, spaceAfter=4)))
+    story.append(Paragraph(
+        "El presente informe aplica el <b>Enfoque de Costo mediante el Metodo de Costo de "
+        "Reposicion Depreciado (CRD)</b>, reconocido internacionalmente por IVS 105 paragrafo 50 "
+        "(IVSC 2022) e implementado mediante la <b>formula de depreciacion no lineal de "
+        "Ross-Heidecke</b>: D = 0.5 x (x + x2), donde x = Edad / Vida Util. "
+        "Este metodo es el estandar de referencia en Venezuela conforme a la "
+        "<b>Norma COVENIN 2521</b> y es aceptado por SUDEBAN, el Registro Inmobiliario "
+        "y los Tribunales de la Republica Bolivariana de Venezuela como base de avaluo "
+        "en procesos judiciales, hipotecas y operaciones de credito. "
+        "Los costos unitarios aplicados corresponden al indice DataLaing MaPreX 2025.",
+        ParagraphStyle("methp", fontName="Helvetica", fontSize=8.5,
+            textColor=GRIS_OSC, leading=13, spaceAfter=5)))
+
+    # Factor Riesgo Pais
+    _fp = getattr(r, 'factor_pais',   1.0) or 1.0
+    _fc = getattr(r, 'factor_ciudad', 1.0) or 1.0
+    _rp = getattr(r, 'riesgo_pais_aplicado', p.get('pais', 'venezuela')) or 'venezuela'
+    if abs(_fp - 1.0) > 0.01 or abs(_fc - 1.0) > 0.01:
+        _rl = "Bajo" if _fp>=0.85 else ("Medio" if _fp>=0.65 else ("Alto" if _fp>=0.40 else "Muy Alto"))
+        _fm = _fc * (1.0 - (1.0 - _fp) * 0.15)
+        story.append(Paragraph(
+            "Factor de Riesgo Pais y Jerarquia Urbana",
+            ParagraphStyle("rph", fontName="Helvetica-Bold", fontSize=9,
+                textColor=AZUL_REY, spaceBefore=4, spaceAfter=4)))
+        story.append(Paragraph(
+            "Se ha aplicado el <b>Factor de Riesgo Pais</b> (F.Pais = " + f"{_fp:.3f}" +
+            " — Riesgo " + _rl + ") para el mercado de <b>" + _rp.title() + "</b>, "
+            "basado en el indice EMBI+ (JP Morgan) y ratings soberanos Moody's/S&P 2025. "
+            "Se aplica adicionalmente el <b>Factor de Jerarquia Urbana</b> (F.Ciudad = " +
+            f"{_fc:.3f}" + ") que refleja el diferencial entre la capital del pais y la "
+            "ubicacion del inmueble, conforme al principio de contribucion (IVS 102). "
+            "El Factor Macro resultante es " + f"{_fm:.3f}" + ".",
+            ParagraphStyle("rpp", fontName="Helvetica", fontSize=8.5,
+                textColor=GRIS_OSC, leading=13, spaceAfter=5)))
+
+    # Limitaciones
+    story.append(Paragraph(
+        "Limitaciones del Informe y Responsabilidad del Perito",
+        ParagraphStyle("limh", fontName="Helvetica-Bold", fontSize=9,
+            textColor=AZUL_REY, spaceBefore=4, spaceAfter=4)))
+    lim_rows = [
+        [Paragraph("LIMITACION", ParagraphStyle("lh", fontName="Helvetica-Bold",
+            fontSize=8, textColor=white, alignment=1)),
+         Paragraph("DESCRIPCION", ParagraphStyle("lh2", fontName="Helvetica-Bold",
+            fontSize=8, textColor=white))],
+        ["Inspeccion fisica",
+         "El informe se basa en datos suministrados por el solicitante. No sustituye "
+         "la inspeccion ocular directa del inmueble por un perito colegiado."],
+        ["Veracidad de datos",
+         "ValuMetrics AI procesa los datos de entrada sin verificar su exactitud. "
+         "El perito firmante es responsable de validar la informacion suministrada."],
+        ["Condiciones de mercado",
+         "El valor corresponde a la fecha del analisis. Fluctuaciones cambiarias o "
+         "del mercado local pueden alterar el resultado en el tiempo."],
+        ["Patologias ocultas",
+         "El analisis Vision AI detecta patologias visibles en las fotografias. "
+         "Defectos estructurales internos requieren ensayos no destructivos (END)."],
+        ["Validez legal",
+         "El informe adquiere plena validez legal unicamente con la firma y sello "
+         "del perito valuador colegiado responsable del proceso de tasacion."],
+    ]
+    lim_t = Table(lim_rows, colWidths=[45*mm, 125*mm])
+    lim_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,0), AZUL_REY),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1), [GRIS_FONDO, white]),
+        ("FONTNAME",      (0,1),(0,-1), "Helvetica-Bold"),
+        ("FONTNAME",      (1,1),(1,-1), "Helvetica"),
+        ("FONTSIZE",      (0,1),(-1,-1), 8),
+        ("TEXTCOLOR",     (0,1),(0,-1), AZUL_REY),
+        ("GRID",          (0,0),(-1,-1), 0.4, HexColor("#DDE1E7")),
+        ("TOPPADDING",    (0,0),(-1,-1), 5),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 5),
+        ("LEFTPADDING",   (0,0),(-1,-1), 6),
+        ("VALIGN",        (0,0),(-1,-1), "TOP"),
+    ]))
+    story.append(lim_t)
+    story.append(Spacer(1, 5*mm))
+
+    # Normas Citadas
+    story.append(Paragraph(
+        "Normas y Estandares Internacionales Aplicados",
+        ParagraphStyle("norh", fontName="Helvetica-Bold", fontSize=9,
+            textColor=AZUL_REY, spaceBefore=4, spaceAfter=4)))
+    nor_rows = [
+        [Paragraph("NORMA / ESTANDAR", ParagraphStyle("nh", fontName="Helvetica-Bold",
+            fontSize=8, textColor=white)),
+         Paragraph("DESCRIPCION Y APLICACION", ParagraphStyle("nh2", fontName="Helvetica-Bold",
+            fontSize=8, textColor=white))],
+        ["IVS 104 (IVSC 2022)",    "Bases de Valor — Define Valor de Mercado"],
+        ["IVS 105 par.50 (IVSC 2022)", "Enfoque de Costo — Costo de Reposicion Depreciado (CRD)"],
+        ["IVS 102 (IVSC 2022)",    "Investigaciones y Cumplimiento — Principios de contribucion"],
+        ["USPAP Standard 1-2",     "Desarrollo de valuaciones de bienes raices"],
+        ["COVENIN 2521",           "Norma venezolana para avaluos de inmuebles urbanos"],
+        ["Ross-Heidecke (1952)",   "Metodo de depreciacion no lineal — D = 0.5(x + x2)"],
+        ["DataLaing MaPreX 2025",  "Indice costos unitarios de construccion — Venezuela"],
+        ["EMBI+ / Damodaran 2026", "Prima de riesgo pais — JP Morgan + Damodaran Country Risk"],
+    ]
+    nor_t = Table(nor_rows, colWidths=[55*mm, 115*mm])
+    nor_t.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,0), AZUL_REY),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1), [GRIS_FONDO, white]),
+        ("FONTNAME",      (0,1),(0,-1), "Helvetica-Bold"),
+        ("FONTNAME",      (1,1),(1,-1), "Helvetica"),
+        ("FONTSIZE",      (0,1),(-1,-1), 8),
+        ("TEXTCOLOR",     (0,1),(0,-1), AZUL_REY),
+        ("GRID",          (0,0),(-1,-1), 0.4, HexColor("#DDE1E7")),
+        ("TOPPADDING",    (0,0),(-1,-1), 4),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 4),
+        ("LEFTPADDING",   (0,0),(-1,-1), 6),
+    ]))
+    story.append(nor_t)
+    story.append(Spacer(1, 8*mm))
+
     # ══════════════════════════════════════════
     #  FIRMA PERICIAL
     # ══════════════════════════════════════════
@@ -669,11 +833,12 @@ def generar_informe_pdf(resultado, nombre_perito: str = "ValuMetrics AI Engine")
 
     # Disclaimer legal
     story.append(Paragraph(
-        "AVISO LEGAL: Este informe ha sido generado mediante algoritmos de inteligencia artificial y métodos matemáticos "
-        "reconocidos (Röss-Hödecke). Su valor es orientativo y no reemplaza la inspección física directa ni el criterio de un perito "
-        "valuador colegiado. El valor estimado está sujeto a variaciones de mercado, condiciones macroeconómicas y la veracidad "
-        "de los datos suministrados por el solicitante. ValuMetrics AI no asume responsabilidad legal por decisiones tomadas "
-        "exclusivamente sobre la base de este documento.",
+        "AVISO LEGAL Y SELLO DE CONFORMIDAD: Este informe tecnico ha sido generado por ValuMetrics AI "
+        "aplicando metodologia Ross-Heidecke (CRD) conforme a IVS 104/105 (IVSC 2022) y COVENIN 2521. "
+        "Constituye un instrumento de apoyo tecnico-pericial. Su validez legal plena requiere la firma "
+        "y sello del perito valuador colegiado responsable, quien certifica haber verificado los datos "
+        "de entrada y validado los resultados del sistema. ValuMetrics AI actua como herramienta de "
+        "precision matematica; el perito humano es el firmante y responsable legal del avaluo.",
         S["disclaimer"]
     ))
 
