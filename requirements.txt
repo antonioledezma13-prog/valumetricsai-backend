@@ -1,13 +1,30 @@
-# Requeridos para funcionar
+# ══ ValuMetrics AI — Dependencias Backend ══
+# Instalar: py -3.11 -m pip install -r requirements.txt
+
+# Core
 fastapi
 uvicorn[standard]
 pydantic
 pyjwt
-reportlab
 python-multipart
-Pillow
 python-dotenv
 
-# Opcionales — instalar por separado si se necesitan
-# pip install ultralytics    <- para análisis de patologías YOLOv8
-# pip install supabase       <- para PostGIS/base de datos cloud
+# PDF
+reportlab
+Pillow
+
+# MongoDB Atlas (async)
+motor
+pymongo
+
+# PayPal (verificación server-side opcional)
+# httpx
+
+# Vision AI — Claude (ya incluido via anthropic SDK en runtime)
+# anthropic  ← ya está como dependencia del sistema
+
+# Opcional — solo si usas YOLOv8 local
+# ultralytics
+
+# Opcional — solo si conectas Supabase PostGIS
+# supabase

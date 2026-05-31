@@ -9,6 +9,8 @@ Rutas:
 """
 
 from fastapi import FastAPI, HTTPException, Depends, status, Request
+from contextlib import asynccontextmanager
+import database as db
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -43,8 +45,15 @@ SECRET_KEY = "valumetrics-secret-2025-change-in-prod"
 ALGORITHM  = "HS256"
 TOKEN_EXPIRE_HOURS = 720  # 30 días
 
+@asynccontextmanager
+async def lifespan(app_: FastAPI):
+    await db.init_db()   # Conectar MongoDB al arrancar
+    yield
+    await db.close_db()  # Cerrar conexión al apagar
+
 app = FastAPI(
     title="ValuMetrics AI API",
+    lifespan=lifespan,
     description="Motor de valoración inmobiliaria pericial con IA",
     version="2.0.0",
 )
@@ -248,7 +257,7 @@ async def register(req: RegisterRequest):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
     user_id = str(uuid.uuid4())
     mes = get_mes_actual()
-    users_db[req.email] = {
+    new_user = {
         "id": user_id,
         "nombre": req.nombre,
         "apellido": req.apellido,
@@ -263,6 +272,10 @@ async def register(req: RegisterRequest):
         "valuaciones_count": 0,
         "created_at": datetime.utcnow().isoformat(),
     }
+    saved = await db.crear_usuario(new_user)
+    if not saved:
+        raise HTTPException(status_code=409, detail="El email ya está registrado")
+    users_db[req.email] = new_user  # cache local
     token = create_token(req.email, req.nombre, req.rol)
     return {
         "message": "Usuario registrado exitosamente",
@@ -279,6 +292,10 @@ async def register(req: RegisterRequest):
 @app.post("/auth/login")
 async def login(req: LoginRequest):
     user = users_db.get(req.email)
+    if not user:
+        user = await db.obtener_usuario(req.email)
+        if user:
+            users_db[req.email] = user  # cache
     if not user or user["password_hash"] != hash_password(req.password):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
     token = create_token(req.email, user["nombre"], user["rol"])
@@ -328,8 +345,6 @@ async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token)
         direccion=req.direccion,
         ciudad=req.ciudad,
         zona_tipo=req.zona_tipo,
-        pais=req.pais,
-        jerarquia_ciudad=req.jerarquia_ciudad,
         zona_clase=req.zona_clase,
         zona_acceso=req.zona_acceso,
         zona_vias=req.zona_vias,
@@ -379,10 +394,19 @@ async def calculate(req: ValuationRequest, payload: dict = Depends(verify_token)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    # Persistir resultado
+    # Persistir en MongoDB + cache local
+    resultado_dict = resultado.__dict__.copy()
     valuations_db[resultado.hash_operacion] = resultado
-    # Registrar uso del mes
-    registrar_uso(users_db.get(payload["sub"]), ip or "")
+    await db.guardar_valuacion(resultado_dict)
+    # Registrar uso
+    user_obj = users_db.get(payload["sub"])
+    registrar_uso(user_obj, ip or "")
+    if user_obj:
+        await db.actualizar_usuario(payload["sub"], {
+            "valuaciones_mes":   user_obj.get("valuaciones_mes", 0),
+            "valuaciones_count": user_obj.get("valuaciones_count", 0),
+            "mes_actual":        user_obj.get("mes_actual", get_mes_actual()),
+        })
 
     return resultado.__dict__
 
@@ -491,8 +515,6 @@ async def calculate_anonimo(req: ValuationRequest, request: Request):
         tipo_inmueble=req.tipo_inmueble,
         direccion=req.direccion, ciudad=req.ciudad,
         zona_tipo=req.zona_tipo,
-        pais=req.pais,
-        jerarquia_ciudad=req.jerarquia_ciudad,
         zona_clase=req.zona_clase, zona_acceso=req.zona_acceso,
         zona_vias=req.zona_vias, zona_agua=req.zona_agua,
         zona_electricidad=req.zona_electricidad,
@@ -536,15 +558,15 @@ async def calculate_anonimo(req: ValuationRequest, request: Request):
 @app.get("/valuation/history")
 async def history(payload: dict = Depends(verify_token)):
     user_email = payload["sub"]
+    # Intentar MongoDB primero, luego cache local
+    mongo_vals = await db.historial_usuario(user_email)
+    if mongo_vals:
+        return {"valuaciones": mongo_vals}
+    # Fallback cache local
     user_vals = [
-        {
-            "hash": k,
-            "timestamp": v.timestamp,
-            "tipo": v.tipo_inmueble,
-            "direccion": v.direccion,
-            "valor_usd": v.valor_total_usd,
-            "confidence": v.confidence_score,
-        }
+        {"hash": k, "timestamp": v.timestamp,
+         "tipo": v.tipo_inmueble, "direccion": v.direccion,
+         "valor_usd": v.valor_total_usd, "confidence": v.confidence_score}
         for k, v in valuations_db.items()
         if v.parametros_entrada.get("usuario_id") == user_email
     ]
@@ -634,4 +656,8 @@ async def guardar_geo(
 @app.get("/health")
 
 async def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "mongodb": "conectado" if db.is_mongo_active() else "memoria",
+    }
