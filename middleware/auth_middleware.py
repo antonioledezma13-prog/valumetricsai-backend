@@ -15,6 +15,8 @@ return Token(access_token=token)
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+if request.url.path == "/api/payments/webhook/paypal":
+        return await call_next(request)
 try:
 token_data = await get_token(request)
 # Aquí puedes agregar la lógica de validación del token

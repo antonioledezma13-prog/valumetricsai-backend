@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Depends, status, Request
 from contextlib import asynccontextmanager
 import database as db
 from fastapi.middleware.cors import CORSMiddleware
+from routes.payments import router as payments_router
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
@@ -80,7 +81,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+app.include_router(payments_router, prefix="/api/payments", tags=["Pagos"])
 security = HTTPBearer()
 
 # ──────────────────────────────────────────────────────
