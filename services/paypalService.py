@@ -1,3 +1,4 @@
+import traceback
 import httpx
 import os
 
@@ -14,7 +15,12 @@ async def get_access_token():
 
 async def create_order(amount: float, currency: str = "USD"):
     try:
+        # Imprimir para ver si las variables existen
+        print(f"DEBUG: Iniciando create_order con monto={amount}")
+        
         token = await get_access_token()
+        print(f"DEBUG: Token obtenido correctamente")
+
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
@@ -30,20 +36,21 @@ async def create_order(amount: float, currency: str = "USD"):
             }]
         }
         
+        url = f"{os.getenv('PAYPAL_BASE_URL')}/v2/checkout/orders"
+        print(f"DEBUG: Intentando POST a {url}")
+        
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{os.getenv('PAYPAL_BASE_URL')}/v2/checkout/orders",
-                headers=headers,
-                json=body
-            )
-            # Imprime el cuerpo de la respuesta para depurar
+            response = await client.post(url, headers=headers, json=body)
+            
+            # Si el error viene de PayPal, lo veremos aquí:
             if response.status_code != 201:
-                print(f"ERROR DETALLADO PAYPAL: {response.status_code} - {response.text}")
+                print(f"ERROR PAYPAL: {response.status_code} - {response.text}")
             
             response.raise_for_status()
             return response.json()
             
-    except Exception as e:
-        # Esto atrapará cualquier error de código (ej: variable no definida)
-        print(f"ERROR CRÍTICO EN PYTHON: {str(e)}")
-        raise e
+    except Exception:
+        # ESTO ES LO MÁS IMPORTANTE: Imprimirá la línea exacta del error
+        print("ERROR CRÍTICO EN BACKEND:")
+        print(traceback.format_exc())
+        raise
