@@ -1,7 +1,6 @@
 # routes/payments.py
 from fastapi import APIRouter
 from controllers.payments_controller import handle_webhook, create_subscription_order
-
 router = APIRouter()
 
 # Quitamos el Depends() problemático. La seguridad se valida dentro del controlador.
