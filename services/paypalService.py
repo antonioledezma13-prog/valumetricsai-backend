@@ -39,9 +39,9 @@ async def create_order(amount: float, currency: str = "USD"):
             json=body
         )
         
-        # Bloque de depuración: Si PayPal arroja error, lo imprimimos en Render
-        if response.status_code >= 400:
-            print(f"[Error PayPal] {response.status_code}: {response.text}")
+        # Si hay error, lanzamos un error con el detalle de PayPal
+        if response.status_code != 201:
+            print(f"DEBUG PAYPAL ERROR: {response.text}") # Esto aparecerá en los logs de Render
+            raise HTTPException(status_code=response.status_code, detail=response.text)
             
-        response.raise_for_status()
         return response.json()
