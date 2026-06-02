@@ -28,3 +28,4 @@ pymongo
 
 # Opcional — solo si conectas Supabase PostGIS
 # supabase
+httpx
