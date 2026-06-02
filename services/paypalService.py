@@ -13,12 +13,11 @@ async def get_access_token():
         return response.json()['access_token']
 
 async def create_order(amount: float, currency: str = "USD"):
-    """Crea una intención de pago en PayPal y devuelve los datos de la orden"""
-    token = await get_access_token()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    # ... resto del código ...
+    
+    # Obtén la URL desde el .env
+    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+    
     body = {
         "intent": "CAPTURE",
         "purchase_units": [{
@@ -28,8 +27,9 @@ async def create_order(amount: float, currency: str = "USD"):
             }
         }],
         "application_context": {
-            "return_url": "http://localhost:3000/payment-success", # Cambiar en prod
-            "cancel_url": "http://localhost:3000/planes"
+            # Ahora usa la variable dinámica
+            "return_url": f"{frontend_url}/payment-success",
+            "cancel_url": f"{frontend_url}/planes"
         }
     }
     
