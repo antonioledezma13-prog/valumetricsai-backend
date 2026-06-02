@@ -13,11 +13,15 @@ async def get_access_token():
         return response.json()['access_token']
 
 async def create_order(amount: float, currency: str = "USD"):
-    # ... resto del código ...
+    """Crea una intención de pago en PayPal y devuelve los datos de la orden"""
+    token = await get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
     
-    # Obtén la URL desde el .env
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-    
+    # Payload simplificado: Sin URLs de redirección porque el SDK de botones
+    # maneja la ventana emergente directamente en el frontend.
     body = {
         "intent": "CAPTURE",
         "purchase_units": [{
@@ -25,12 +29,7 @@ async def create_order(amount: float, currency: str = "USD"):
                 "currency_code": currency,
                 "value": f"{amount:.2f}"
             }
-        }],
-        "application_context": {
-            # Ahora usa la variable dinámica
-            "return_url": f"{frontend_url}/payment-success",
-            "cancel_url": f"{frontend_url}/planes"
-        }
+        }]
     }
     
     async with httpx.AsyncClient() as client:
@@ -39,22 +38,10 @@ async def create_order(amount: float, currency: str = "USD"):
             headers=headers,
             json=body
         )
-        response.raise_for_status()
-        return response.json()
-
-async def capture_order(order_id: str):
-    """Captura el dinero de una orden previamente aprobada por el usuario"""
-    token = await get_access_token()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{os.getenv('PAYPAL_BASE_URL')}/v2/checkout/orders/{order_id}/capture",
-            headers=headers,
-            json={}
-        )
+        
+        # Bloque de depuración: Si PayPal arroja error, lo imprimimos en Render
+        if response.status_code >= 400:
+            print(f"[Error PayPal] {response.status_code}: {response.text}")
+            
         response.raise_for_status()
         return response.json()
