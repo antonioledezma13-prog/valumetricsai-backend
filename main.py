@@ -8,12 +8,11 @@ Rutas:
   GET  /valuation/pdf/{hash_operacion}
 """
 
-import os
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from contextlib import asynccontextmanager
 import database as db
-from fastapi.middleware.cors import CORSMiddleware
 from routes.payments import router as payments_router
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, field_validator
@@ -43,7 +42,7 @@ except Exception as _e:
 # ──────────────────────────────────────────────────────
 #  Configuración
 # ──────────────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = "valumetrics-secret-2025-change-in-prod"
 ALGORITHM  = "HS256"
 TOKEN_EXPIRE_HOURS = 720  # 30 días
 
@@ -72,8 +71,10 @@ ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "null",   # file:// requests
     # Agregar dominio de producción aquí:
-    # "https://valumetricsai.vercel.app",
+    # "https://valumetricsai.com",
 ]
+
+app.include_router(payments_router, prefix="/api/payments", tags=["payments"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +83,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 security = HTTPBearer()
 
 # ──────────────────────────────────────────────────────
@@ -89,6 +91,10 @@ security = HTTPBearer()
 # ──────────────────────────────────────────────────────
 users_db: dict = {}          # email → user dict
 valuations_db: dict = {}     # hash_operacion → ResultadoValuacion
+
+# Compartir referencia del users_db con el router de pagos
+from routes.payments import set_main_users_db
+set_main_users_db(users_db)
 
 # ──────────────────────────────────────────────────────
 #  Schemas Pydantic

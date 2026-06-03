@@ -184,16 +184,5 @@ async def obtener_pagos_usuario(email: str) -> List[dict]:
             print(f"[DB] obtener_pagos error: {e}")
     return [p for p in _mem_pagos.values() if p.get("user_email") == email]
 
-async def actualizar_pago_status(order_id: str, status: str) -> bool:
-    if _mongo_ok:
-        try:
-            await _db.pagos.update_one(
-                {"order_id": order_id},
-                {"$set": {"status": status, "updated_at": datetime.utcnow().isoformat()}}
-            )
-            return True
-        except Exception as e:
-            print(f"[DB] actualizar_pago_status error: {e}")
-    return False
 def is_mongo_active() -> bool:
     return _mongo_ok
