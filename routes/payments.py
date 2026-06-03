@@ -230,13 +230,19 @@ async def capture_payment(req: CaptureRequest, request: Request, background_task
         try:
             import jwt as pyjwt
             SECRET_KEY = os.getenv("SECRET_KEY")
-            payload = pyjwt.decode(auth_header[7:], SECRET_KEY, algorithms=["HS256"])
+            token_str = auth_header[7:]
+            
+            # Intentamos decodificar
+            payload = pyjwt.decode(token_str, SECRET_KEY, algorithms=["HS256"])
             user_email = payload.get("sub", "")
-        except:
-            pass
-
-    if not user_email:
-        raise HTTPException(status_code=401, detail="Autenticación requerida")
+        except pyjwt.ExpiredSignatureError:
+            print("DEBUG: El token ha expirado.")
+            raise HTTPException(status_code=401, detail="Token expirado")
+        except pyjwt.InvalidTokenError as e:
+            print(f"DEBUG: Token inválido: {str(e)}")
+            raise HTTPException(status_code=401, detail=f"Token inválido: {str(e)}")
+    else:
+        print("DEBUG: Header Authorization mal formado o ausente.")
 
     # 2. Obtener token de PayPal
     token = await _get_token()
