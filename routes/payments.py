@@ -65,7 +65,7 @@ PLAN_NOMBRES = {
 # ── Schemas ───────────────────────────────────────────────────
 
 class CreateOrderRequest(BaseModel):
-    plan:    str           # profesional | inmobiliaria | enterprise | payperuse
+    plan_type:    str           # profesional | inmobiliaria | enterprise | payperuse
     billing: str = "monthly"  # monthly | annual
 
 class CaptureRequest(BaseModel):
@@ -173,7 +173,7 @@ async def create_order(req: CreateOrderRequest, request: Request):
     Si no hay credenciales (desarrollo), devuelve orden mock.
     """
     token = await _get_token()
-    amount = PRECIOS.get((req.plan, req.billing), "19.99")
+    amount = PRECIOS.get((req.plan_type.lower(), req.billing), "19.99")
     desc   = f"ValuMetrics AI — Plan {PLAN_NOMBRES.get(req.plan, req.plan)} ({req.billing})"
 
     if not token:
