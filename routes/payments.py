@@ -219,25 +219,18 @@ async def create_order(req: CreateOrderRequest, request: Request):
 
 
 @router.post("/capture")
-async def capture_payment(
-    req: CaptureRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
-):
+async def capture_payment(req: CaptureRequest, request: Request, background_tasks: BackgroundTasks):
     """
     Captura y VERIFICA server-side el pago.
-    Llamado por el frontend tras onApprove de PayPal.
     """
-    # Obtener usuario desde el token JWT del header
+    # 1. Obtener usuario desde el token JWT
     auth_header = request.headers.get("Authorization", "")
-    user_email  = ""
+    user_email = ""
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
             SECRET_KEY = os.getenv("SECRET_KEY")
-            payload = pyjwt.decode(
-                auth_header[7:], SECRET_KEY, algorithms=["HS256"]
-            )
+            payload = pyjwt.decode(auth_header[7:], SECRET_KEY, algorithms=["HS256"])
             user_email = payload.get("sub", "")
         except:
             pass
@@ -245,65 +238,46 @@ async def capture_payment(
     if not user_email:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
 
-    # Obtener token
+    # 2. Obtener token de PayPal
     token = await _get_token()
     if not token:
         raise HTTPException(status_code=500, detail="Error de autenticación con PayPal.")
 
-    # Capturar la orden con PayPal
+    # 3. Capturar la orden con PayPal
     c = _creds()
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(
-                f"{c['base']}/v2/checkout/orders/{req.order_id}/capture",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type":  "application/json",
-                },
-            )
-            if r.status_code not in (200, 201):
-                raise HTTPException(status_code=502,
-                    detail=f"Error capturando pago: {r.text[:300]}")
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            f"{c['base']}/v2/checkout/orders/{req.order_id}/capture",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type":  "application/json",
+            },
+        )
+        if r.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"Error capturando pago: {r.text[:300]}")
+        order = r.json()
 
-            order = r.json()
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error de conexión PayPal: {e}")
-
-    # Verificar estado
+    # 4. Verificar estado y activar plan
     if order.get("status") != "COMPLETED":
-        raise HTTPException(status_code=402,
-            detail=f"Pago no completado. Estado: {order.get('status')}")
+        raise HTTPException(status_code=402, detail="Pago no completado")
 
-    # Extraer datos del pago verificado
-    units       = order.get("purchase_units", [{}])
-    captures    = units[0].get("payments", {}).get("captures", [{}])
+    units = order.get("purchase_units", [{}])
+    captures = units[0].get("payments", {}).get("captures", [{}])
     amount_paid = captures[0].get("amount", {}).get("value", "0") if captures else "0"
     payer_email = order.get("payer", {}).get("email_address", "")
 
-    # Verificar que el monto corresponde al plan solicitado
-    expected = PRECIOS.get((req.plan, req.billing), "0")
-    if abs(float(amount_paid) - float(expected)) > 0.50:
-        print(f"[PayPal] ALERTA: monto {amount_paid} ≠ esperado {expected} para {user_email}")
-
-    # Plan real basado en monto pagado (más seguro que confiar en req.plan)
     plan_real = _plan_desde_amount(amount_paid) or req.plan
 
-    # Activar plan en background (no bloquear respuesta)
     background_tasks.add_task(
         _activar_plan, user_email, plan_real, req.order_id,
         amount_paid, req.billing, payer_email
     )
 
     return {
-        "status":      "COMPLETED",
-        "plan":        plan_real,
-        "plan_nombre": PLAN_NOMBRES.get(plan_real, plan_real),
-        "order_id":    req.order_id,
-        "amount":      amount_paid,
-        "message":     f"¡Pago confirmado! Plan {PLAN_NOMBRES.get(plan_real)} activado.",
+        "status": "COMPLETED",
+        "plan": plan_real,
+        "order_id": req.order_id,
+        "message": "¡Pago confirmado!"
     }
 
 
