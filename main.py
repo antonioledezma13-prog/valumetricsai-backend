@@ -42,7 +42,7 @@ except Exception as _e:
 # ──────────────────────────────────────────────────────
 #  Configuración
 # ──────────────────────────────────────────────────────
-SECRET_KEY = "valumetrics-secret-2025-change-in-prod"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM  = "HS256"
 TOKEN_EXPIRE_HOURS = 720  # 30 días
 
@@ -81,7 +81,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(payments_router, prefix="/api/payments", tags=["Pagos"])
 security = HTTPBearer()
 
 # ──────────────────────────────────────────────────────
