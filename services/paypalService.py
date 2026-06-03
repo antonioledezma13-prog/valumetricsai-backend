@@ -44,9 +44,12 @@ async def create_order(amount: float, currency: str = "USD"):
             print(f"DEBUG: Cuerpo de respuesta: {response.text}")
             
             if response.status_code != 201:
-                raise Exception(f"PayPal devolvió error: {response.text}")
-            
-            return response.json()
+    raise Exception(f"PayPal devolvió error: {response.text}")
+
+            # Retorna directamente el JSON
+            data = response.json()
+            print(f"DEBUG: Retornando datos: {data}")
+            return data
             
     except httpx.HTTPError as e:
         print(f"ERROR DE CONEXIÓN HTTP: {str(e)}")

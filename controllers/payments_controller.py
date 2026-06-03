@@ -49,12 +49,11 @@ async def create_subscription_order(request: Request):
             "status": "pending",
             "paypal_order_id": order_id,
             "amount": float(amount),
-            "created_at": datetime.utcnow()
-        }
+                    }
         
         # OJO: Asegúrate de que en tu archivo database.py la variable que exporta la 
         # conexión a Motor se llame 'db' para que esta línea funcione.
-        await db.db["payments"].insert_one(new_payment) 
+        await db.guardar_pago(new_payment) 
         
         # Devuelve la orden para que el frontend abra la ventana de PayPal
         return {"status": "success", "order_id": order_id, "paypal_raw": paypal_order}
@@ -89,14 +88,6 @@ async def handle_webhook(request: Request):
             pass
 
         # 3. Habilitar la persistencia real actualizando tu base de datos
-        result = await db.db["payments"].update_one(
-            {'paypal_order_id': order_id}, 
-            {'$set': {'status': 'completed', 'updated_at': datetime.utcnow()}}
-        )
-        
-        if result.modified_count == 0:
-            print(f"[Paypal Webhook] Orden {order_id} no encontrada en DB local para actualizar.")
+        await db.actualizar_pago_status(order_id, "completed")
             
         return {"status": "success", "message": "Pago procesado y actualizado en DB"}
-    
-    return {"status": "ignored"}
