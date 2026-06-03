@@ -220,9 +220,9 @@ async def create_order(req: CreateOrderRequest, request: Request):
 
 @router.post("/capture")
 async def capture_payment(
-    req: CaptureRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
+req: CaptureRequest,
+request: Request,
+background_tasks: BackgroundTasks,
 ):
     """
     Captura y VERIFICA server-side el pago.
