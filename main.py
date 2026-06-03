@@ -8,6 +8,7 @@ Rutas:
   GET  /valuation/pdf/{hash_operacion}
 """
 
+import os
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from contextlib import asynccontextmanager
 import database as db
