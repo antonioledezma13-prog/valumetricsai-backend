@@ -43,6 +43,7 @@ async def create_subscription_order(request: Request):
         
         # 2. Registrar el pago como 'pending' en MongoDB Atlas
         new_payment = {
+            "order_id": order_data["id"],
             "user_id": user_id, # Ahora sí guardará el correo real del usuario
             "type": "subscription" if plan_type != "Pay-per-Use" else "report",
             "product_id": plan_type,
