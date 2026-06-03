@@ -5,7 +5,7 @@ import database as db
 import services.paypalService as paypal
 import jwt  # Importamos jwt para leer tu token directamente
 
-SECRET_KEY = "valumetrics-secret-2025-change-in-prod"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 
 async def create_subscription_order(request: Request):
