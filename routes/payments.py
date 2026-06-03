@@ -220,9 +220,9 @@ async def create_order(req: CreateOrderRequest, request: Request):
 
 @router.post("/capture")
 async def capture_payment(
-req: CaptureRequest,
-request: Request,
-background_tasks: BackgroundTasks,
+    req: CaptureRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
 ):
     """
     Captura y VERIFICA server-side el pago.
@@ -234,7 +234,7 @@ background_tasks: BackgroundTasks,
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
-            SECRET_KEY = os.getenv("SECRET_KEY", "valumetrics-secret-2025-change-in-prod")
+            SECRET_KEY = os.getenv("SECRET_KEY")
             payload = pyjwt.decode(
                 auth_header[7:], SECRET_KEY, algorithms=["HS256"]
             )
@@ -245,8 +245,8 @@ background_tasks: BackgroundTasks,
     if not user_email:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
 
-    # Mock para desarrollo sin credenciales
-   token = await _get_token()
+    # Obtener token
+    token = await _get_token()
     if not token:
         raise HTTPException(status_code=500, detail="Error de autenticación con PayPal.")
 
