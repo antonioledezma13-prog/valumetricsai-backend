@@ -174,7 +174,7 @@ async def create_order(req: CreateOrderRequest, request: Request):
     """
     token = await _get_token()
     amount = PRECIOS.get((req.plan_type.lower(), req.billing), "19.99")
-    desc   = f"ValuMetrics AI — Plan {PLAN_NOMBRES.get(req.plan, req.plan)} ({req.billing})"
+    desc   = f"ValuMetrics AI — Plan {PLAN_NOMBRES.get(req.plan_type, req.plan_type)} ({req.billing})"
 
     if not token:
         # Modo desarrollo sin credenciales — devolver mock
