@@ -43,14 +43,14 @@ async def create_subscription_order(request: Request):
         
         # 2. Registrar el pago como 'pending' en MongoDB Atlas
         new_payment = {
-            "order_id": order_data["id"],
-            "user_id": user_id, # Ahora sí guardará el correo real del usuario
+            "order_id": order_id,  # CAMBIA ESTO: usa la variable order_id que ya tienes
+            "user_id": user_id,
             "type": "subscription" if plan_type != "Pay-per-Use" else "report",
             "product_id": plan_type,
             "status": "pending",
             "paypal_order_id": order_id,
             "amount": float(amount),
-                    }
+        }
         
         # OJO: Asegúrate de que en tu archivo database.py la variable que exporta la 
         # conexión a Motor se llame 'db' para que esta línea funcione.
