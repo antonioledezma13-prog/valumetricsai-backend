@@ -177,13 +177,7 @@ async def create_order(req: CreateOrderRequest, request: Request):
     desc   = f"ValuMetrics AI — Plan {PLAN_NOMBRES.get(req.plan_type, req.plan_type)} ({req.billing})"
 
     if not token:
-        # Modo desarrollo sin credenciales — devolver mock
-        return {
-            "id": f"MOCK-ORDER-{datetime.utcnow().strftime('%H%M%S')}",
-            "status": "CREATED",
-            "mock": True,
-            "amount": amount,
-        }
+        raise HTTPException(status_code=500, detail="Error al conectar con PayPal (Token no obtenido). Verifica tus credenciales.")
 
     c = _creds()
     order_data = {
@@ -252,19 +246,9 @@ async def capture_payment(
         raise HTTPException(status_code=401, detail="Autenticación requerida")
 
     # Mock para desarrollo sin credenciales
-    token = await _get_token()
-    if not token or req.order_id.startswith("MOCK-"):
-        background_tasks.add_task(
-            _activar_plan, user_email, req.plan, req.order_id,
-            PRECIOS.get((req.plan, req.billing), "0"), req.billing, ""
-        )
-        return {
-            "status":    "COMPLETED",
-            "plan":      req.plan,
-            "order_id":  req.order_id,
-            "mock":      True,
-            "message":   f"Plan {PLAN_NOMBRES.get(req.plan, req.plan)} activado (modo desarrollo)",
-        }
+   token = await _get_token()
+    if not token:
+        raise HTTPException(status_code=500, detail="Error de autenticación con PayPal.")
 
     # Capturar la orden con PayPal
     c = _creds()
