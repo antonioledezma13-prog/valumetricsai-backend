@@ -8,6 +8,7 @@ Rutas:
   GET  /valuation/pdf/{hash_operacion}
 """
 
+import os
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from contextlib import asynccontextmanager
 import database as db
@@ -42,7 +43,8 @@ except Exception as _e:
 # ──────────────────────────────────────────────────────
 #  Configuración
 # ──────────────────────────────────────────────────────
-SECRET_KEY = "valumetrics-secret-2025-change-in-prod"
+SECRET_KEY_ENV = os.getenv("SECRET_KEY", "valumetricsledezma20260530mayoecoapp!valorbienesraiceswithai")
+SECRET_KEY = SECRET_KEY_ENV.strip()
 ALGORITHM  = "HS256"
 TOKEN_EXPIRE_HOURS = 720  # 30 días
 
@@ -71,7 +73,7 @@ ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "null",   # file:// requests
     # Agregar dominio de producción aquí:
-    # "https://valumetricsai.com",
+    # "https://valumetricsai.vercel.app",
 ]
 
 app.include_router(payments_router, prefix="/api/payments", tags=["payments"])

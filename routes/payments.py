@@ -122,33 +122,45 @@ async def _activar_plan(user_email: str, plan: str, order_id: str,
     import database as db
     from routes.payments import _get_main_users_db
 
-    # 1. Guardar pago en MongoDB
+    # 1. Consultar créditos actuales para que no se reseteen
+    user_data = _get_main_users_db().get(user_email) or await db.obtener_usuario(user_email)
+    creditos_actuales = user_data.get("payperuse_creditos", 0) if user_data else 0
+
+    # 2. Guardar registro del pago en MongoDB
     pago = {
-        "order_id":    order_id,
-        "user_email":  user_email,
-        "payer_email": payer_email,
-        "plan":        plan,
-        "amount":      amount,
-        "billing":     billing,
-        "status":      "completed",
-        "mode":        PAYPAL_MODE,
-        "created_at":  datetime.utcnow().isoformat(),
+        "paypal_order_id":    order_id,
+        "timestamp":          datetime.utcnow().isoformat(),
+        "user_email":         user_email,
+        "paypal_payer_email": payer_email,
+        "plan":               plan,
+        "amount":             amount,
+        "plan_billing":       billing,
+        "status":             "completed",
+        "mode":               PAYPAL_MODE,
+        "mes_actual":         datetime.utcnow().strftime("%Y-%m"),
     }
     await db.guardar_pago(pago)
 
-    # 2. Actualizar usuario en MongoDB
+    # 3. Actualizar usuario en MongoDB
     update = {
-        "plan":       plan,
-        "plan_since": datetime.utcnow().isoformat(),
-        "plan_billing": billing,
+        "plan":               plan,
+        "plan_since":         datetime.utcnow().isoformat(),
+        "plan_billing":       billing,
+        "paypal_order_id":    order_id,
+        "paypal_payer_email": payer_email,
+        "mes_actual":         datetime.utcnow().strftime("%Y-%m")
     }
+    
     if plan == "payperuse":
-        # Pay-per-use: incrementar créditos de uso
-        update["payperuse_creditos"] = 1
+        # Incrementamos de forma segura basándonos en lo que ya tenía
+        update["payperuse_creditos"] = creditos_actuales + 1
+    else:
+        # Si cambia a un plan mensual/anual recurrente, reiniciamos su contador del mes
+        update["valuaciones_mes"] = 0
 
     await db.actualizar_usuario(user_email, update)
 
-    # 3. Actualizar cache local
+    # 4. Actualizar cache local
     users_cache = _get_main_users_db()
     if user_email in users_cache:
         users_cache[user_email].update(update)
@@ -169,9 +181,25 @@ def _get_main_users_db():
 @router.post("/create-order")
 async def create_order(req: CreateOrderRequest, request: Request):
     """
-    Crea una orden en PayPal. El frontend la usa para abrir el popup.
-    Si no hay credenciales (desarrollo), devuelve orden mock.
+    Crea una orden en PayPal inyectando el correo del usuario en el custom_id.
     """
+    # A. EXTRAER EL EMAIL REAL DEL USUARIO DESDE EL TOKEN
+    auth_header = request.headers.get("Authorization", "")
+    user_email = ""
+    if auth_header.startswith("Bearer "):
+        try:
+            import jwt as pyjwt
+            SECRET_KEY_ENV = os.getenv("SECRET_KEY", "valumetricsledezma20260530mayoecoapp!valorbienesraiceswithai")
+            SECRET_KEY = SECRET_KEY_ENV.strip()
+            payload = pyjwt.decode(auth_header[7:], SECRET_KEY, algorithms=["HS256"])
+            user_email = payload.get("sub", "")
+        except Exception as e:
+            print(f"[PayPal Create Order JWT Error] {e}")
+            raise HTTPException(status_code=401, detail="Token de autenticación inválido")
+
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Usuario no autenticado")
+
     token = await _get_token()
     amount = PRECIOS.get((req.plan_type.lower(), req.billing), "19.99")
     desc   = f"ValuMetrics AI — Plan {PLAN_NOMBRES.get(req.plan_type, req.plan_type)} ({req.billing})"
@@ -184,18 +212,16 @@ async def create_order(req: CreateOrderRequest, request: Request):
         "intent": "CAPTURE",
         "purchase_units": [{
             "description": desc,
+            "custom_id": user_email,  # 👈 SE VINCULA DE FORMA SEGURA EL EMAIL DE LA APP
             "amount": {
                 "currency_code": "USD",
                 "value": amount,
             },
         }],
         "application_context": {
-            "brand_name":          "ValuMetrics AI",
-            "locale":              "es-VE",
-            "landing_page":        "BILLING",
-            "shipping_preference": "NO_SHIPPING",
-            "user_action":         "PAY_NOW",
-        },
+            "return_url": "https://valumetricsai.vercel.app/payment-success.html",
+            "cancel_url": "https://valumetricsai.vercel.app/payment-cancel.html"
+        }
     }
 
     try:
@@ -210,13 +236,11 @@ async def create_order(req: CreateOrderRequest, request: Request):
             )
             if r.status_code in (200, 201):
                 return r.json()
-            raise HTTPException(status_code=502,
-                detail=f"PayPal error {r.status_code}: {r.text[:200]}")
+            raise HTTPException(status_code=502, detail=f"PayPal error {r.status_code}: {r.text[:200]}")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error creando orden: {e}")
-
 
 @router.post("/capture")
 async def capture_payment(req: CaptureRequest, request: Request, background_tasks: BackgroundTasks):
@@ -231,7 +255,8 @@ async def capture_payment(req: CaptureRequest, request: Request, background_task
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
-            SECRET_KEY = os.getenv("SECRET_KEY").strip()
+            SECRET_KEY_ENV = os.getenv("SECRET_KEY", "valumetricsledezma20260530mayoecoapp!valorbienesraiceswithai")
+            SECRET_KEY = SECRET_KEY_ENV.strip()
             token_str = auth_header[7:]
             
             # Intentamos decodificar
@@ -292,7 +317,7 @@ async def capture_payment(req: CaptureRequest, request: Request, background_task
 
 
 @router.post("/webhook/paypal")
-async def webhook_paypal(request: Request, background_tasks: BackgroundTasks):
+async def paypal_webhook(request: Request, background_tasks: BackgroundTasks): 
     """
     Webhook de PayPal — notificación directa server-to-server.
     Actúa como capa de redundancia: si el frontend falla, el webhook activa el plan.
@@ -358,16 +383,22 @@ async def webhook_paypal(request: Request, background_tasks: BackgroundTasks):
                         captures = units[0].get("payments",{}).get("captures",[{}])
                         amount   = captures[0].get("amount",{}).get("value","0") if captures else "0"
                         payer_email = order.get("payer",{}).get("email_address","")
-                        # Buscar usuario por payer_email en DB
-                        import database as db
-                        user = await db.obtener_usuario(payer_email)
-                        if user:
-                            plan = _plan_desde_amount(amount)
-                            background_tasks.add_task(
-                                _activar_plan, payer_email, plan,
-                                order_id, amount, "monthly", payer_email
-                            )
-                            print(f"[Webhook] Plan {plan} activado vía webhook para {payer_email}")
+                        
+                        # 👈 CAMBIO CRÍTICO: Buscar el custom_id que inyectamos en create_order
+                        real_user_email = units[0].get("custom_id", "")
+                        
+                        if real_user_email:
+                            import database as db
+                            user = await db.obtener_usuario(real_user_email)
+                            if user:
+                                plan = _plan_desde_amount(amount)
+                                background_tasks.add_task(
+                                    _activar_plan, real_user_email, plan,
+                                    order_id, amount, "monthly", payer_email
+                                )
+                                print(f"[Webhook] Plan {plan} activado vía webhook para {real_user_email}")
+                        else:
+                            print(f"[Webhook Warning] Orden {order_id} no tiene custom_id asociado.")
             except Exception as e:
                 print(f"[Webhook] Error procesando orden: {e}")
 
@@ -376,24 +407,20 @@ async def webhook_paypal(request: Request, background_tasks: BackgroundTasks):
 
 @router.get("/status")
 async def payment_status(request: Request):
-    """
-    Consulta el estado actual del plan del usuario.
-    El frontend lo llama cada vez que necesita verificar si el plan fue activado.
-    """
     auth_header = request.headers.get("Authorization", "")
     user_email  = ""
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
-            SECRET_KEY = os.getenv("SECRET_KEY")
+            # Unificamos con el mismo salvavidas y strip de seguridad
+            SECRET_KEY_ENV = os.getenv("SECRET_KEY", "valumetricsledezma20260530mayoecoapp!valorbienesraiceswithai")
+            SECRET_KEY = SECRET_KEY_ENV.strip()
+            
             payload = pyjwt.decode(auth_header[7:], SECRET_KEY, algorithms=["HS256"])
             user_email = payload.get("sub", "")
-        except:
+        except Exception as e:
+            print(f"[PayPal Status Error] Falló la decodificación: {e}")
             pass
-
-    if not user_email:
-        return {"plan": "anonimo", "limite_mes": 3, "puede_pdf": False}
-
     import database as db
     user = _get_main_users_db().get(user_email) or await db.obtener_usuario(user_email)
     if not user:
