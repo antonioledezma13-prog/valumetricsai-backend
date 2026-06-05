@@ -381,7 +381,7 @@ async def payment_status(request: Request):
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
-            SECRET_KEY = os.getenv("SECRET_KEY", "valumetrics-secret-2025-change-in-prod")
+            SECRET_KEY = os.getenv("SECRET_KEY")
             payload = pyjwt.decode(auth_header[7:], SECRET_KEY, algorithms=["HS256"])
             user_email = payload.get("sub", "")
         except:
