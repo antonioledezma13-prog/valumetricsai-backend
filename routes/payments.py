@@ -231,7 +231,7 @@ async def capture_payment(req: CaptureRequest, request: Request, background_task
     if auth_header.startswith("Bearer "):
         try:
             import jwt as pyjwt
-            SECRET_KEY = os.getenv("SECRET_KEY")
+            SECRET_KEY = os.getenv("SECRET_KEY").strip()
             token_str = auth_header[7:]
             
             # Intentamos decodificar
