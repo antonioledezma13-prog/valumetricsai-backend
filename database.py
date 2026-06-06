@@ -166,6 +166,7 @@ _mongo_ok = False
 
 async def guardar_pago(pago: dict) -> bool:
     global _db # Asegúrate de usar la variable global
+    print(f"[DB Debug] Campos recibidos en pago: {list(pago.keys())}")
     pago["created_at"] = datetime.utcnow().isoformat()
     
     # Debug: Mira qué está pasando en los logs
@@ -174,7 +175,7 @@ async def guardar_pago(pago: dict) -> bool:
     if _mongo_ok and _db is not None:
         try:
             await _db.pagos.replace_one(
-                {"order_id": pago["order_id"]},
+                {"paypal_order_id": pago["paypal_order_id"]},
                 pago, upsert=True
             )
             print(f"[DB] Pago guardado en MongoDB: {pago['order_id']}")
