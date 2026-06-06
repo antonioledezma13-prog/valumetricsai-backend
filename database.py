@@ -160,28 +160,28 @@ async def historial_usuario(usuario_id: str, limite: int = 50) -> List[dict]:
 #  PAGOS
 # ──────────────────────────────────────────
 
+_client = None
+_db = None 
+_mongo_ok = False
+
 async def guardar_pago(pago: dict) -> bool:
+    global _db # Asegúrate de usar la variable global
     pago["created_at"] = datetime.utcnow().isoformat()
-    if _mongo_ok:
+    
+    # Debug: Mira qué está pasando en los logs
+    print(f"[DB Debug] ¿Es mongo activo?: {_mongo_ok}, ¿Es _db None?: {_db is None}")
+    
+    if _mongo_ok and _db is not None:
         try:
             await _db.pagos.replace_one(
                 {"order_id": pago["order_id"]},
                 pago, upsert=True
             )
+            print(f"[DB] Pago guardado en MongoDB: {pago['order_id']}")
             return True
         except Exception as e:
-            print(f"[DB] guardar_pago error: {e}")
+            print(f"[DB] ¡ERROR CRÍTICO AL GUARDAR EN MONGO!: {e}")
+    
+    # Si llegamos aquí, NO se guardó en Mongo
     _mem_pagos[pago["order_id"]] = pago
     return True
-
-async def obtener_pagos_usuario(email: str) -> List[dict]:
-    if _mongo_ok:
-        try:
-            cursor = _db.pagos.find({"user_email": email}, {"_id":0})
-            return await cursor.to_list(length=100)
-        except Exception as e:
-            print(f"[DB] obtener_pagos error: {e}")
-    return [p for p in _mem_pagos.values() if p.get("user_email") == email]
-
-def is_mongo_active() -> bool:
-    return _mongo_ok
