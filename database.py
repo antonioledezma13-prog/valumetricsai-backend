@@ -18,31 +18,30 @@ DB_NAME     = os.getenv("MONGODB_DB", "valumetrics")
 
 # ── Intento de conexión async con Motor ──────────────────────
 _client = None
-_db = _client.get_database(DB_NAME)
+_db     = None
 _mongo_ok = False
 
 async def init_db():
-    """Inicializar conexión MongoDB. Llamar en startup de FastAPI."""
     global _client, _db, _mongo_ok
     if not MONGODB_URI:
         print("[DB] Sin MONGODB_URI — usando almacenamiento en memoria")
         return
     try:
         import motor.motor_asyncio as motor_async
-        _client   = motor_async.AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-        _db       = _client[DB_NAME]
-        # Test connection
-        await _client.admin.command("ping")
+        _client = motor_async.AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        
+        # Ahora que _client existe, puedes asignar _db aquí
+        _db = _client.get_database(DB_NAME) 
+        
+        # Test connection (haciendo ping a la base de datos específica)
+        await _db.command("ping")
         _mongo_ok = True
         print(f"[DB] MongoDB Atlas conectado: {DB_NAME} ✓")
+        
         # Crear índices
         await _db.users.create_index("email", unique=True)
-        await _db.valuaciones.create_index("hash_operacion", unique=True)
-        await _db.valuaciones.create_index("usuario_id")
-        await _db.valuaciones.create_index("created_at")
-        await _db.pagos.create_index("order_id", unique=True)
     except Exception as e:
-        print(f"[DB] Error MongoDB: {e} — usando memoria")
+        print(f"[DB] Error al conectar: {e}")
         _mongo_ok = False
 
 async def close_db():
