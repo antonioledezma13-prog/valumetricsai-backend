@@ -165,24 +165,29 @@ _db = None
 _mongo_ok = False
 
 async def guardar_pago(pago: dict) -> bool:
-    global _db # Asegúrate de usar la variable global
-    print(f"[DB Debug] Campos recibidos en pago: {list(pago.keys())}")
+    global _db
     pago["created_at"] = datetime.utcnow().isoformat()
     
-    # Debug: Mira qué está pasando en los logs
-    print(f"[DB Debug] ¿Es mongo activo?: {_mongo_ok}, ¿Es _db None?: {_db is None}")
+    # Usamos paypal_order_id como clave principal, que es la que realmente existe
+    order_key = pago.get("paypal_order_id")
     
+    if not order_key:
+        print(f"[DB Error] ¡El pago no tiene 'paypal_order_id'! Campos recibidos: {list(pago.keys())}")
+        return False
+
     if _mongo_ok and _db is not None:
         try:
+            # Usamos order_key en lugar de pago["order_id"]
             await _db.pagos.replace_one(
-                {"paypal_order_id": pago["paypal_order_id"]},
-                pago, upsert=True
+                {"paypal_order_id": order_key}, 
+                pago, 
+                upsert=True
             )
-            print(f"[DB] Pago guardado en MongoDB: {pago['order_id']}")
+            print(f"[DB] Pago guardado exitosamente en MongoDB con ID: {order_key}")
             return True
         except Exception as e:
             print(f"[DB] ¡ERROR CRÍTICO AL GUARDAR EN MONGO!: {e}")
     
-    # Si llegamos aquí, NO se guardó en Mongo
-    _mem_pagos[pago["order_id"]] = pago
+    # Fallback a memoria usando la clave correcta
+    _mem_pagos[order_key] = pago
     return True
