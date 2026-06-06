@@ -446,7 +446,7 @@ async def payment_status(request: Request):
         "limite_mes":     limite,
         "usadas_mes":     usadas,
         "restantes":      (limite - usadas) if limite != -1 else -1,
-        "creditos": user.get("payperuse_creditos", 0)
+        "creditos": user.get("payperuse_creditos", 0),
         "puede_pdf":      puede_pdf,
         "puede_vision":   puede_vision,
         "plan_since":     user.get("plan_since", ""),
