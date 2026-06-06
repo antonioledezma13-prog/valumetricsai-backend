@@ -18,7 +18,7 @@ DB_NAME     = os.getenv("MONGODB_DB", "valumetrics")
 
 # ── Intento de conexión async con Motor ──────────────────────
 _client = None
-_db     = _client.get_database(DB_NAME)
+_db = _client.get_database(DB_NAME)
 _mongo_ok = False
 
 async def init_db():
