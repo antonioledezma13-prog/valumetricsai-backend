@@ -309,8 +309,9 @@ async def capture_payment(req: CaptureRequest, request: Request, background_task
     )
 
     return {
-        "status": "COMPLETED",
-        "plan": plan_real,
+        "status": "active",
+        "plan": user.get("plan", "free"),
+        "plan_nombre": PLAN_NOMBRES.get(user.get("plan"), "Plan Actual"),
         "order_id": req.order_id,
         "message": "¡Pago confirmado!"
     }
