@@ -441,11 +441,12 @@ async def payment_status(request: Request):
     usadas = user.get("valuaciones_mes", 0) if user.get("mes_actual") == mes else 0
 
     return {
-        "plan":           plan,
-        "plan_nombre":    PLAN_NOMBRES.get(plan, plan.title()),
+        "plan":           user.get("plan", "free"),
+        "plan_nombre":    PLAN_NOMBRES.get(user.get("plan"), "Plan Actual"),
         "limite_mes":     limite,
         "usadas_mes":     usadas,
         "restantes":      (limite - usadas) if limite != -1 else -1,
+        "creditos": user.get("payperuse_creditos", 0)
         "puede_pdf":      puede_pdf,
         "puede_vision":   puede_vision,
         "plan_since":     user.get("plan_since", ""),
