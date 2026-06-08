@@ -25,7 +25,7 @@ from datetime import datetime
 router = APIRouter()
 
 # ── Configuración ─────────────────────────────────────────────
-PAYPAL_MODE       = os.getenv("PAYPAL_MODE", "production")
+PAYPAL_MODE = os.getenv("PAYPAL_MODE", "sandbox").strip().lower()
 PAYPAL_WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "")   # de developer.paypal.com
 
 CREDS = {
