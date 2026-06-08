@@ -451,5 +451,5 @@ async def payment_status(request: Request):
         "puede_pdf":      puede_pdf,
         "puede_vision":   puede_vision,
         "plan_since":     user.get("plan_since", ""),
-        "plan_billing":   user.get("plan_billing", ""),
+        "plan_billing":   user.get("plan_billing", "")
     }
