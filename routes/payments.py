@@ -350,7 +350,7 @@ async def paypal_webhook(request: Request, background_tasks: BackgroundTasks):
                     )
                     result = r.json()
                     if result.get("verification_status") != "SUCCESS":
-                        print("[Webhook] Firma inválida — ignorando")
+                        print(f"[Webhook] FALLÓ LA VERIFICACIÓN. Respuesta de PayPal: {result}")
                         return {"status": "ignored", "reason": "invalid_signature"}
             except Exception as e:
                 print(f"[Webhook] Error verificando firma: {e}")
